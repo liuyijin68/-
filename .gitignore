@@ -40,3 +40,5 @@ pnpm-debug.log*
 # key/
 
 .cozeproj/reduction
+node-compile-cache/
+.preview
