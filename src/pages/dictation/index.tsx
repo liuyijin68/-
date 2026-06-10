@@ -3,16 +3,16 @@ import Taro, { useLoad } from '@tarojs/taro';
 import { useState } from 'react';
 import { Network } from '@/network';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Volume2, Check, X, SkipForward, RotateCcw, House } from 'lucide-react-taro';
+import { Volume2, Check, X, SkipForward, RotateCcw, House, CircleQuestionMark } from 'lucide-react-taro';
 import './index.css';
 
 interface WordItem {
   word: string;
   phonetic: string;
-  meaning: string;
+  meanings: string[];
+  addedDate: string;
 }
 
 interface DictationResult {
@@ -20,6 +20,7 @@ interface DictationResult {
   userAnswer: string;
   isCorrect: boolean;
   correctMeaning: string;
+  addedToReview: boolean;
 }
 
 const DictationPage = () => {
@@ -31,91 +32,105 @@ const DictationPage = () => {
   const [results, setResults] = useState<DictationResult[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [dictationType, setDictationType] = useState<'new' | 'review'>('new');
 
   useLoad(() => {
-    // 从存储中获取单词列表
-    const storedWords = Taro.getStorageSync('dictationWords');
+    // 获取词库类型参数
+    const params = Taro.getCurrentInstance().router?.params;
+    const type = params?.type || 'new';
+    setDictationType(type as 'new' | 'review');
+
+    // 加载对应词库
+    loadVocabulary(type as 'new' | 'review');
+  });
+
+  // 加载词库
+  const loadVocabulary = (type: 'new' | 'review') => {
+    const storageKey = type === 'new' ? 'newWordsVocabulary' : 'reviewWordsVocabulary';
+    const storedWords = Taro.getStorageSync(storageKey);
+
     if (storedWords && storedWords.length > 0) {
       setWords(storedWords);
+      // 同时保存到当前听写词库
+      Taro.setStorageSync('dictationWords', storedWords);
     } else {
-      Taro.showToast({ title: '没有单词数据', icon: 'none' });
+      Taro.showToast({ title: type === 'new' ? '没有新单词' : '复习词库为空', icon: 'none' });
       setTimeout(() => {
         Taro.navigateBack();
       }, 1500);
     }
-  });
+  };
 
   // 当前单词
   const currentWord = words[currentIndex] || null;
 
-  // 进度百分比
-  const progressPercent = words.length > 0 
-    ? Math.round(((currentIndex + (phase === 'result' ? 1 : 0)) / words.length) * 100) 
-    : 0;
+  // 开始听写（朗读单词）
+  const handleStartDictation = async () => {
+    if (!currentWord) return;
 
-  // 正确数量
-  const correctCount = results.filter(r => r.isCorrect).length;
-
-  // 播放单词读音
-  const handleSpeak = async () => {
-    if (!currentWord || isPlaying) return;
-
+    setPhase('listening');
     setIsPlaying(true);
 
     try {
+      // 调用 TTS 接口朗读单词
       const res = await Network.request({
         url: '/api/dictation/speak-word',
         method: 'POST',
-        data: {
-          word: currentWord.word
-        }
+        data: { word: currentWord.word },
       });
 
-      console.log('语音响应:', res.data);
-      const data = res.data as any;
-      
-      if (data?.data?.audioUrl) {
-        // 播放音频
+      console.log('朗读响应:', res);
+
+      if (res?.data?.audioUrl) {
+        // 播放音频（小程序端）
         const innerAudioContext = Taro.createInnerAudioContext();
-        innerAudioContext.src = data.data.audioUrl;
+        innerAudioContext.src = res.data.audioUrl;
+        innerAudioContext.onPlay(() => {
+          console.log('开始播放');
+        });
         innerAudioContext.onEnded(() => {
           setIsPlaying(false);
-          innerAudioContext.destroy();
+          setPhase('answering');
         });
         innerAudioContext.onError((err) => {
-          console.error('音频播放错误:', err);
+          console.error('播放失败:', err);
           setIsPlaying(false);
-          innerAudioContext.destroy();
-          Taro.showToast({ title: '播放失败', icon: 'none' });
+          setPhase('answering');
         });
         innerAudioContext.play();
+      } else {
+        // 没有音频URL，直接进入答题阶段（显示单词让用户回答）
+        setIsPlaying(false);
+        setPhase('answering');
       }
-    } catch (err) {
-      console.error('获取语音失败:', err);
+    } catch (error) {
+      console.error('朗读失败:', error);
       setIsPlaying(false);
-      Taro.showToast({ title: '获取语音失败', icon: 'none' });
+      setPhase('answering');
     }
   };
 
-  // 开始听写
-  const handleStartDictation = () => {
-    setPhase('listening');
-    handleSpeak();
-  };
+  // 检查答案
+  const handleCheckAnswer = async (answerType: 'answer' | 'unknown') => {
+    if (answerType === 'unknown') {
+      // 用户说不知道，加入复习词库
+      addToReviewVocabulary(currentWord);
+      
+      const result: DictationResult = {
+        word: currentWord!.word,
+        userAnswer: '不知道',
+        isCorrect: false,
+        correctMeaning: currentWord!.meanings.join('；'),
+        addedToReview: true,
+      };
+      setResults([...results, result]);
+      
+      // 进入下一个单词或结束
+      moveToNext();
+      return;
+    }
 
-  // 写完了，准备说答案
-  const handleWritten = () => {
-    setPhase('answering');
-  };
-
-  // 再次播放单词
-  const handleReplay = () => {
-    handleSpeak();
-  };
-
-  // 提交答案
-  const handleSubmitAnswer = async () => {
-    if (!userAnswer.trim() || !currentWord) {
+    if (!userAnswer.trim()) {
       Taro.showToast({ title: '请输入中文含义', icon: 'none' });
       return;
     }
@@ -127,323 +142,271 @@ const DictationPage = () => {
         url: '/api/dictation/check-answer',
         method: 'POST',
         data: {
-          word: currentWord.word,
-          correctMeaning: currentWord.meaning,
-          userAnswer: userAnswer.trim()
-        }
+          word: currentWord!.word,
+          correctMeanings: currentWord!.meanings,
+          userAnswer: userAnswer.trim(),
+        },
       });
 
-      console.log('答案检查响应:', res.data);
-      const data = res.data as any;
-      
-      const resultIsCorrect = data?.data?.isCorrect ?? false;
-      setIsCorrect(resultIsCorrect);
+      console.log('检查响应:', res);
 
-      // 保存结果
-      setResults(prev => [...prev, {
-        word: currentWord.word,
+      const correct = res?.data?.isCorrect || false;
+
+      setIsCorrect(correct);
+
+      const result: DictationResult = {
+        word: currentWord!.word,
         userAnswer: userAnswer.trim(),
-        isCorrect: resultIsCorrect,
-        correctMeaning: currentWord.meaning
-      }]);
+        isCorrect: correct,
+        correctMeaning: res?.data?.matchedMeaning || currentWord!.meanings.join('；'),
+        addedToReview: false,
+      };
+      setResults([...results, result]);
+
+      // 如果是复习词库且答对了，从复习词库删除
+      if (dictationType === 'review' && correct) {
+        removeFromReviewVocabulary(currentWord!.word);
+      }
+
+      // 如果答错了，加入复习词库
+      if (!correct && dictationType === 'new') {
+        addToReviewVocabulary(currentWord);
+        result.addedToReview = true;
+      }
 
       setPhase('result');
-    } catch (err) {
-      console.error('答案检查失败:', err);
+    } catch (error) {
+      console.error('检查答案失败:', error);
       Taro.showToast({ title: '检查失败，请重试', icon: 'none' });
     } finally {
       setIsChecking(false);
     }
   };
 
-  // 下一个单词
-  const handleNextWord = () => {
-    if (currentIndex < words.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-      setUserAnswer('');
-      setIsCorrect(null);
-      setPhase('listening');
-      // 自动播放下一个单词
-      setTimeout(() => handleSpeak(), 300);
-    } else {
-      // 听写完成
-      setPhase('ready');
-      Taro.showToast({ 
-        title: `听写完成！正确 ${correctCount}/${words.length}`, 
-        icon: 'success',
-        duration: 2000
+  // 加入复习词库
+  const addToReviewVocabulary = (word: WordItem) => {
+    const reviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
+    // 检查是否已存在
+    const exists = reviewWords.some((w: WordItem) => w.word === word.word);
+    if (!exists) {
+      reviewWords.push({
+        ...word,
+        addedDate: new Date().toLocaleDateString('zh-CN'),
       });
+      Taro.setStorageSync('reviewWordsVocabulary', reviewWords);
+      Taro.showToast({ title: '已加入复习词库', icon: 'none', duration: 1000 });
     }
   };
 
-  // 跳过当前单词
-  const handleSkip = () => {
-    setResults(prev => [...prev, {
-      word: currentWord?.word || '',
-      userAnswer: '(跳过)',
-      isCorrect: false,
-      correctMeaning: currentWord?.meaning || ''
-    }]);
-    handleNextWord();
+  // 从复习词库删除
+  const removeFromReviewVocabulary = (wordText: string) => {
+    const reviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
+    const updatedWords = reviewWords.filter((w: WordItem) => w.word !== wordText);
+    Taro.setStorageSync('reviewWordsVocabulary', updatedWords);
+    Taro.showToast({ title: '已从复习词库移除', icon: 'success', duration: 1000 });
   };
 
-  // 重新听写
-  const handleRestart = () => {
-    setCurrentIndex(0);
+  // 进入下一个单词
+  const moveToNext = () => {
     setUserAnswer('');
     setIsCorrect(null);
-    setResults([]);
-    setPhase('ready');
+    
+    if (currentIndex < words.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+      setPhase('ready');
+    } else {
+      // 听写结束，显示结果
+      setPhase('result');
+      showFinalResults();
+    }
+  };
+
+  // 继续下一个
+  const handleContinue = () => {
+    moveToNext();
+  };
+
+  // 显示最终结果
+  const showFinalResults = () => {
+    const correctCount = results.filter(r => r.isCorrect).length;
+    const wrongCount = results.filter(r => !r.isCorrect).length;
+    
+    Taro.showModal({
+      title: '听写完成',
+      content: `正确: ${correctCount} 个\n错误: ${wrongCount} 个\n已加入复习词库: ${results.filter(r => r.addedToReview).length} 个`,
+      showCancel: false,
+      confirmText: '返回首页',
+      success: () => {
+        Taro.navigateTo({ url: '/pages/index/index' });
+      },
+    });
   };
 
   // 返回首页
-  const handleGoHome = () => {
-    Taro.navigateBack();
+  const handleBackToHome = () => {
+    Taro.navigateTo({ url: '/pages/index/index' });
   };
 
-  // 显示单词信息（仅在结果阶段）
-  const showWordInfo = phase === 'result';
+  // 重新听写当前单词
+  const handleRepeatWord = () => {
+    setPhase('ready');
+    setUserAnswer('');
+    setIsCorrect(null);
+  };
+
+  // 进度计算
+  const progress = ((currentIndex + 1) / words.length) * 100;
 
   return (
-    <View className="min-h-full bg-gray-50 p-4">
-      {/* 标题 */}
-      <View className="mb-4">
-        <Text className="block text-xl font-bold text-gray-800 text-center">单词听写</Text>
-        <Text className="block text-sm text-gray-500 text-center mt-1">
-          进度: {currentIndex + 1} / {words.length}
+    <View className="min-h-screen bg-white p-4">
+      {/* 顶部进度 */}
+      <View className="flex items-center justify-between mb-4">
+        <Text className="block text-sm text-gray-500">
+          {dictationType === 'new' ? '新单词听写' : '复习听写'} - {currentIndex + 1}/{words.length}
         </Text>
+        <View className="flex-1 mx-3">
+          <View className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <View 
+              className="h-full bg-blue-500 rounded-full transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </View>
+        </View>
+        <View onClick={handleBackToHome}>
+          <House size={20} color="#6b7280" />
+        </View>
       </View>
 
-      {/* 进度条 */}
-      <Progress value={progressPercent} className="mb-4" />
-
-      {/* 听写完成统计 */}
-      {phase === 'ready' && results.length === words.length && words.length > 0 && (
-        <Card className="mb-4">
-          <CardHeader>
-            <CardTitle>听写完成</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <View className="flex flex-col items-center gap-4">
-              <View className="flex flex-row items-center gap-2">
-                <Check size={32} color="#10b981" />
-                <Text className="block text-2xl font-bold text-emerald-500">
-                  {correctCount} / {words.length}
-                </Text>
-              </View>
-              <Text className="block text-gray-500">
-                正确率: {Math.round((correctCount / words.length) * 100)}%
+      {/* 单词卡片 */}
+      <Card className="shadow-lg mb-4">
+        <CardContent className="p-6">
+          {phase === 'ready' && (
+            <View className="text-center py-8">
+              <Text className="block text-lg text-gray-600 mb-4">
+                准备听写第 {currentIndex + 1} 个单词
               </Text>
-              
-              {/* 结果详情 */}
-              <View className="w-full flex flex-col gap-2 mt-4">
-                {results.map((result, index) => (
-                  <View 
-                    key={index}
-                    className={`flex flex-row items-center justify-between p-3 rounded-lg ${
-                      result.isCorrect ? 'bg-emerald-50' : 'bg-red-50'
-                    }`}
-                  >
-                    <View className="flex flex-row items-center gap-2">
-                      {result.isCorrect ? (
-                        <Check size={18} color="#10b981" />
-                      ) : (
-                        <X size={18} color="#ef4444" />
-                      )}
-                      <Text className="block font-semibold text-gray-800">{result.word}</Text>
-                    </View>
-                    <View className="flex flex-col items-end">
-                      <Text className={`block text-sm ${result.isCorrect ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {result.userAnswer}
-                      </Text>
-                      {!result.isCorrect && (
-                        <Text className="block text-xs text-gray-500">
-                          正确: {result.correctMeaning}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                ))}
-              </View>
-
-              <View className="flex flex-row gap-2 w-full mt-4">
-                <Button className="flex-1" variant="outline" onClick={handleGoHome}>
-                  <House size={18} color="#1890ff" className="mr-2" />
-                  <Text>返回首页</Text>
-                </Button>
-                <Button className="flex-1" onClick={handleRestart}>
-                  <RotateCcw size={18} color="#1890ff" className="mr-2" />
-                  <Text>重新听写</Text>
-                </Button>
-              </View>
-            </View>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 准备阶段 */}
-      {phase === 'ready' && results.length < words.length && (
-        <Card className="mb-4">
-          <CardContent className="p-6">
-            <View className="flex flex-col items-center gap-4">
-              <Text className="block text-lg text-gray-700">准备好了吗？</Text>
-              <Button className="w-full" onClick={handleStartDictation}>
-                <Volume2 size={18} color="#1890ff" className="mr-2" />
-                <Text>开始听写</Text>
+              <Button
+                onClick={handleStartDictation}
+                className="bg-blue-500 text-white rounded-full px-8 py-3"
+              >
+                <View className="flex items-center justify-center gap-2">
+                  <Volume2 size={20} color="#ffffff" />
+                  <Text className="text-white font-semibold">开始听写</Text>
+                </View>
               </Button>
             </View>
-          </CardContent>
-        </Card>
-      )}
+          )}
 
-      {/* 听写阶段 - 播放单词 */}
-      {phase === 'listening' && currentWord && (
-        <Card className="mb-4">
-          <CardContent className="p-6">
-            <View className="flex flex-col items-center gap-4">
-              <Text className="block text-lg text-gray-700">
-                正在播放单词...
-              </Text>
-              {isPlaying && (
-                <View className="flex flex-row items-center gap-2">
-                  <Volume2 size={32} color="#1890ff" className="animate-pulse" />
-                  <Text className="block text-blue-500">播放中</Text>
-                </View>
-              )}
-              <View className="flex flex-row gap-2 w-full mt-4">
-                <Button 
-                  className="flex-1" 
-                  variant="outline"
-                  onClick={handleReplay}
-                  disabled={isPlaying}
-                >
-                  <Volume2 size={18} color="#1890ff" className="mr-2" />
-                  <Text>再听一次</Text>
-                </Button>
-                <Button 
-                  className="flex-1"
-                  onClick={handleWritten}
-                >
-                  <Check size={18} color="#1890ff" className="mr-2" />
-                  <Text>我写完了</Text>
-                </Button>
+          {phase === 'listening' && (
+            <View className="text-center py-8">
+              <View className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 flex items-center justify-center">
+                <Volume2 size={32} color="#3b82f6" className={isPlaying ? 'animate-pulse' : ''} />
               </View>
+              <Text className="block text-lg text-gray-600">
+                {isPlaying ? '正在朗读单词...' : '请听单词读音'}
+              </Text>
             </View>
-          </CardContent>
-        </Card>
-      )}
+          )}
 
-      {/* 回答阶段 */}
-      {phase === 'answering' && currentWord && (
-        <Card className="mb-4">
-          <CardHeader>
-            <CardTitle>说出中文含义</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <View className="flex flex-col gap-4">
-              <View className="bg-gray-100 rounded-lg p-3">
+          {phase === 'answering' && (
+            <View className="space-y-4">
+              <View className="text-center mb-4">
+                <Text className="block text-2xl font-bold text-gray-800">
+                  {currentWord?.word}
+                </Text>
+                {currentWord?.phonetic && (
+                  <Text className="block text-sm text-gray-500 mt-1">
+                    {currentWord.phonetic}
+                  </Text>
+                )}
+              </View>
+
+              <View className="bg-gray-50 rounded-xl p-3">
                 <Input
                   className="w-full bg-transparent"
-                  placeholder="输入单词的中文含义..."
+                  placeholder="请输入中文含义"
                   value={userAnswer}
                   onInput={(e) => setUserAnswer(e.detail.value)}
                 />
               </View>
-              
-              <View className="flex flex-row gap-2">
-                <Button 
-                  className="flex-1"
-                  variant="outline"
-                  onClick={handleReplay}
+
+              <View className="flex gap-3">
+                <Button
+                  onClick={() => handleCheckAnswer('answer')}
+                  disabled={isChecking}
+                  className="flex-1 bg-blue-500 text-white rounded-xl"
                 >
-                  <Volume2 size={18} color="#1890ff" className="mr-2" />
-                  <Text>再听一次</Text>
+                  <View className="flex items-center justify-center gap-2">
+                    <Check size={18} color="#ffffff" />
+                    <Text className="text-white">确认</Text>
+                  </View>
                 </Button>
-                <Button 
-                  className="flex-1"
-                  onClick={handleSubmitAnswer}
-                  disabled={isChecking || !userAnswer.trim()}
+                <Button
+                  onClick={() => handleCheckAnswer('unknown')}
+                  className="flex-1 bg-gray-200 text-gray-700 rounded-xl"
                 >
-                  {isChecking ? (
-                    <Text>检查中...</Text>
-                  ) : (
-                    <>
-                      <Check size={18} color="#1890ff" className="mr-2" />
-                      <Text>提交答案</Text>
-                    </>
-                  )}
+                  <View className="flex items-center justify-center gap-2">
+                    <CircleQuestionMark size={18} color="#6b7280" />
+                    <Text>不知道</Text>
+                  </View>
                 </Button>
               </View>
             </View>
-          </CardContent>
-        </Card>
-      )}
+          )}
 
-      {/* 结果阶段 */}
-      {phase === 'result' && currentWord && (
-        <Card className="mb-4">
-          <CardContent className="p-6">
-            <View className="flex flex-col items-center gap-4">
-              {/* 结果指示 */}
-              <View
-                className={`flex flex-row items-center gap-2 p-4 rounded-full ${
-                  isCorrect ? 'bg-emerald-100' : 'bg-red-100'
-                }`}
-              >
-                {isCorrect ? (
-                  <Check size={32} color="#10b981" />
-                ) : (
-                  <X size={32} color="#ef4444" />
-                )}
-                <Text
-                  className={`block font-semibold ${
-                    isCorrect ? 'text-emerald-600' : 'text-red-600'
-                  }`}
-                >
+          {phase === 'result' && currentIndex < words.length - 1 && (
+            <View className="space-y-4">
+              <View className="text-center">
+                <View className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${isCorrect ? 'bg-green-100' : 'bg-red-100'}`}>
+                  {isCorrect ? <Check size={32} color="#22c55e" /> : <X size={32} color="#ef4444" />}
+                </View>
+                <Text className={`block text-lg font-semibold ${isCorrect ? 'text-green-600' : 'text-red-600'}`}>
                   {isCorrect ? '正确！' : '错误'}
                 </Text>
               </View>
 
-              {/* 单词信息 */}
-              {showWordInfo && (
-                <View className="w-full bg-white rounded-lg p-4 shadow-sm">
-                  <View className="flex flex-col items-center gap-2">
-                    <Text className="block text-xl font-bold text-gray-800">{currentWord.word}</Text>
-                    <Text className="block text-sm text-gray-500">{currentWord.phonetic}</Text>
-                    <Text className="block text-base text-gray-700">{currentWord.meaning}</Text>
-                  </View>
-                  
-                  {!isCorrect && (
-                    <View className="mt-4 p-3 bg-red-50 rounded-lg">
-                      <Text className="block text-sm text-red-600">
-                        你的答案: {userAnswer}
-                      </Text>
-                    </View>
-                  )}
+              {!isCorrect && (
+                <View className="bg-gray-50 rounded-xl p-3">
+                  <Text className="block text-sm text-gray-600 mb-1">正确答案：</Text>
+                  <Text className="block text-gray-800">{results[results.length - 1]?.correctMeaning}</Text>
                 </View>
               )}
 
-              {/* 下一步按钮 */}
-              <View className="flex flex-row gap-2 w-full mt-4">
-                <Button 
-                  className="flex-1"
-                  variant="outline"
-                  onClick={handleSkip}
-                >
-                  <SkipForward size={18} color="#1890ff" className="mr-2" />
-                  <Text>跳过</Text>
-                </Button>
-                <Button 
-                  className="flex-1"
-                  onClick={handleNextWord}
-                >
-                  <Text>下一个单词</Text>
-                </Button>
-              </View>
+              <Button
+                onClick={handleContinue}
+                className="w-full bg-blue-500 text-white rounded-xl"
+              >
+                <View className="flex items-center justify-center gap-2">
+                  <SkipForward size={18} color="#ffffff" />
+                  <Text className="text-white">下一个单词</Text>
+                </View>
+              </Button>
             </View>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 操作按钮 */}
+      <View className="flex gap-3">
+        <Button
+          onClick={handleRepeatWord}
+          className="flex-1 bg-gray-100 text-gray-700 rounded-xl"
+        >
+          <View className="flex items-center justify-center gap-2">
+            <RotateCcw size={18} color="#6b7280" />
+            <Text>重听</Text>
+          </View>
+        </Button>
+        <Button
+          onClick={handleBackToHome}
+          className="flex-1 bg-gray-100 text-gray-700 rounded-xl"
+        >
+          <View className="flex items-center justify-center gap-2">
+            <House size={18} color="#6b7280" />
+            <Text>返回首页</Text>
+          </View>
+        </Button>
+      </View>
     </View>
   );
 };

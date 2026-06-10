@@ -17,6 +17,13 @@ interface WordItem {
   meaning: string;
 }
 
+interface WordItemNew {
+  word: string;
+  phonetic: string;
+  meanings: string[];
+  addedDate: string;
+}
+
 @Controller('dictation')
 export class DictationController {
   private storage: S3Storage;
@@ -225,16 +232,204 @@ ${selections.map((s, i) => `区域${i + 1}: x=${s.x}, y=${s.y}, width=${s.width}
   }
 
   /**
-   * 使用 LLM 检查答案是否正确
+   * 使用 LLM 多模态识别图片中所有单词（不圈选）
+   * 只识别英文单词/短语，中文含义通过翻译获取
+   */
+  @Post('recognize-all-words')
+  @HttpCode(200)
+  async recognizeAllWords(@Body() body: { imageUrl: string }) {
+    const { imageUrl } = body;
+
+    console.log('识别全部单词:', imageUrl);
+
+    if (!imageUrl) {
+      return {
+        code: 400,
+        msg: '缺少图片URL',
+        data: null,
+      };
+    }
+
+    // 使用多模态 LLM 识别图片中的单词
+    const client = new LLMClient(this.llmConfig);
+
+    // 第一步：识别图片中所有英文单词/短语
+    const recognizePrompt = `请分析这张英语单词学习图片。
+
+这张图片是典型的单词学习卡片格式，格式规则如下：
+- 单词后面有斜杠 "/" 表示后面是音标，音标后面是词性和中文含义
+- 短语后面没有音标和词性，只有中文含义
+- 每行可能包含一个单词或短语及其相关信息
+
+请识别图片中所有的英文单词或短语（不识别中文含义）。
+
+返回格式为 JSON 数组，每个元素包含：
+- word: 英语单词或短语
+- phonetic: 音标（如果有，没有则为空字符串）
+- rawMeaning: 图片中显示的原始中文含义行（用于后续翻译参考）
+
+只返回 JSON 数组，不要其他解释文字。
+示例输出格式：
+[{"word":"apple","phonetic":"/ˈæpl/","rawMeaning":"n. 苹果"},{"word":"look forward to","phonetic":"","rawMeaning":"期待；盼望"}]`;
+
+    const recognizeMessages = [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: recognizePrompt },
+          {
+            type: 'image_url' as const,
+            image_url: {
+              url: imageUrl,
+              detail: 'high' as const,
+            },
+          },
+        ],
+      },
+    ];
+
+    try {
+      const recognizeResponse = await client.invoke(recognizeMessages, {
+        model: 'doubao-seed-1-8-251228',
+        temperature: 0.3,
+      });
+
+      console.log('识别响应:', recognizeResponse.content);
+
+      // 解析识别结果
+      let rawWords: { word: string; phonetic: string; rawMeaning: string }[] = [];
+      try {
+        const content = recognizeResponse.content.trim();
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          rawWords = JSON.parse(jsonMatch[0]);
+        }
+      } catch (parseErr) {
+        console.error('JSON 解析失败:', parseErr);
+        return {
+          code: 500,
+          msg: '识别结果解析失败',
+          data: null,
+        };
+      }
+
+      if (rawWords.length === 0) {
+        return {
+          code: 200,
+          msg: '未识别到单词',
+          data: { words: [] },
+        };
+      }
+
+      // 第二步：为每个单词翻译获取完整中文含义（多词性多含义）
+      const words: WordItemNew[] = [];
+      for (const rawWord of rawWords) {
+        const translatedMeanings = await this.translateWord(client, rawWord.word, rawWord.rawMeaning);
+        words.push({
+          word: rawWord.word,
+          phonetic: rawWord.phonetic,
+          meanings: translatedMeanings,
+          addedDate: new Date().toLocaleDateString('zh-CN'),
+        });
+      }
+
+      console.log('最终识别结果:', words);
+
+      return {
+        code: 200,
+        msg: 'success',
+        data: {
+          words,
+          count: words.length,
+        },
+      };
+    } catch (err) {
+      console.error('识别失败:', err);
+      return {
+        code: 500,
+        msg: '识别失败',
+        data: null,
+      };
+    }
+  }
+
+  /**
+   * 翻译单词获取完整中文含义（多词性多含义）
+   */
+  private async translateWord(client: LLMClient, word: string, rawMeaning: string): Promise<string[]> {
+    const translatePrompt = `请为以下英语单词或短语提供完整的中文翻译，包括所有词性和含义。
+
+单词: ${word}
+图片中的原始含义参考: ${rawMeaning}
+
+要求：
+1. 如果单词有多种词性（如名词、动词、形容词等），每种词性的含义都要列出
+2. 如果某个词性有多种含义，都要列出
+3. 用户只需说对其中一个含义就判定为正确
+
+返回格式为 JSON 数组，包含所有可能的含义：
+["含义1","含义2","含义3"]
+
+示例：
+单词 "run" 应返回：
+["跑；奔跑","运营；管理","运行；运转","n. 跑步；运行"]
+
+单词 "look forward to" 应返回：
+["期待；盼望","盼望；期望"]
+
+只返回 JSON 数组，不要其他解释文字。`;
+
+    const translateMessages = [
+      {
+        role: 'user' as const,
+        content: translatePrompt,
+      },
+    ];
+
+    try {
+      const translateResponse = await client.invoke(translateMessages, {
+        model: 'doubao-seed-1-8-251228',
+        temperature: 0.3,
+      });
+
+      console.log('翻译响应:', word, translateResponse.content);
+
+      // 解析翻译结果
+      try {
+        const content = translateResponse.content.trim();
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]);
+        }
+      } catch (parseErr) {
+        console.error('翻译 JSON 解析失败:', parseErr);
+      }
+
+      // 降级处理：使用原始含义
+      if (rawMeaning) {
+        return [rawMeaning];
+      }
+      return [`请参考词典查询 ${word} 的含义`];
+    } catch (err) {
+      console.error('翻译失败:', word, err);
+      if (rawMeaning) {
+        return [rawMeaning];
+      }
+      return [`请参考词典查询 ${word} 的含义`];
+    }
+  }
+
+  /**
+   * 使用 LLM 检查答案是否正确（支持多词性多含义）
    */
   @Post('check-answer')
   @HttpCode(200)
-  async checkAnswer(@Body() body: { word: string; correctMeaning: string; userAnswer: string }) {
-    const { word, correctMeaning, userAnswer } = body;
+  async checkAnswerNew(@Body() body: { word: string; correctMeanings: string[]; userAnswer: string }) {
+    const { word, correctMeanings, userAnswer } = body;
 
-    console.log('检查答案:', word, correctMeaning, userAnswer);
+    console.log('检查答案:', word, correctMeanings, userAnswer);
 
-    if (!word || !correctMeaning || !userAnswer) {
+    if (!word || !correctMeanings || correctMeanings.length === 0 || !userAnswer) {
       return {
         code: 400,
         msg: '缺少必要参数',
@@ -247,17 +442,18 @@ ${selections.map((s, i) => `区域${i + 1}: x=${s.x}, y=${s.y}, width=${s.width}
     const prompt = `请判断用户的答案是否正确。
 
 单词: ${word}
-正确含义: ${correctMeaning}
+所有可能的正确含义（用户只需说对其中一个）:
+${correctMeanings.map((m, i) => `${i + 1}. ${m}`).join('\n')}
 用户答案: ${userAnswer}
 
 判断规则：
-1. 用户答案需要与正确含义语义相近即可算正确
-2. 如果用户答案包含了正确含义的核心意思，算正确
-3. 答案顺序不同也算正确
-4. 如果用户答案完全错误或与正确含义无关，算错误
+1. 用户答案只需匹配其中一个含义即算正确
+2. 如果用户答案与某个含义语义相近，算正确
+3. 如果用户答案包含了某个正确含义的核心意思，算正确
+4. 如果用户答案完全错误或与所有正确含义无关，算错误
 
 只返回一个 JSON 对象：
-{"isCorrect": true} 或 {"isCorrect": false}`;
+{"isCorrect": true, "matchedMeaning": "匹配的含义"} 或 {"isCorrect": false, "matchedMeaning": ""}`;
 
     const messages = [
       {
@@ -269,25 +465,33 @@ ${selections.map((s, i) => `区域${i + 1}: x=${s.x}, y=${s.y}, width=${s.width}
     try {
       const response = await client.invoke(messages, {
         model: 'doubao-seed-1-8-251228',
-        temperature: 0.1, // 低温度保证判断一致性
+        temperature: 0.1,
       });
 
       console.log('LLM 响应:', response.content);
 
       // 解析结果
       let isCorrect = false;
+      let matchedMeaning = '';
       try {
         const content = response.content.trim();
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
           isCorrect = parsed.isCorrect === true;
+          matchedMeaning = parsed.matchedMeaning || '';
         }
       } catch (parseErr) {
         console.error('JSON 解析失败:', parseErr);
-        // 默认使用简单的字符串匹配
-        isCorrect = userAnswer.toLowerCase().includes(correctMeaning.toLowerCase()) ||
-                    correctMeaning.toLowerCase().includes(userAnswer.toLowerCase());
+        // 降级处理：检查是否有任何含义匹配
+        for (const meaning of correctMeanings) {
+          if (userAnswer.toLowerCase().includes(meaning.toLowerCase()) ||
+              meaning.toLowerCase().includes(userAnswer.toLowerCase())) {
+            isCorrect = true;
+            matchedMeaning = meaning;
+            break;
+          }
+        }
       }
 
       return {
@@ -296,15 +500,24 @@ ${selections.map((s, i) => `区域${i + 1}: x=${s.x}, y=${s.y}, width=${s.width}
         data: {
           isCorrect,
           word,
-          correctMeaning,
+          matchedMeaning,
+          correctMeanings,
           userAnswer,
         },
       };
     } catch (err) {
       console.error('LLM 调用失败:', err);
-      // 降级处理：简单字符串匹配
-      const isCorrect = userAnswer.toLowerCase().includes(correctMeaning.toLowerCase()) ||
-                        correctMeaning.toLowerCase().includes(userAnswer.toLowerCase());
+      // 降级处理
+      let isCorrect = false;
+      let matchedMeaning = '';
+      for (const meaning of correctMeanings) {
+        if (userAnswer.toLowerCase().includes(meaning.toLowerCase()) ||
+            meaning.toLowerCase().includes(userAnswer.toLowerCase())) {
+          isCorrect = true;
+          matchedMeaning = meaning;
+          break;
+        }
+      }
       
       return {
         code: 200,
@@ -312,7 +525,8 @@ ${selections.map((s, i) => `区域${i + 1}: x=${s.x}, y=${s.y}, width=${s.width}
         data: {
           isCorrect,
           word,
-          correctMeaning,
+          matchedMeaning,
+          correctMeanings,
           userAnswer,
         },
       };
