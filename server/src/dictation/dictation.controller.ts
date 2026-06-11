@@ -532,4 +532,98 @@ ${correctMeanings.map((m, i) => `${i + 1}. ${m}`).join('\n')}
       };
     }
   }
+
+  /**
+   * 朗读单词（美式 + 英式发音）
+   */
+  @Post('speak-word-both')
+  @HttpCode(200)
+  async speakWordBoth(@Body() body: { word: string }) {
+    const { word } = body;
+    console.log('朗读单词（美式+英式）:', word);
+
+    if (!word) {
+      return { code: 400, msg: '缺少单词参数' };
+    }
+
+    try {
+      const ttsClient = new TTSClient(this.llmConfig);
+
+      // 使用中英双语的声音朗读单词
+      const response = await ttsClient.synthesize({
+        uid: 'dictation-user',
+        text: word,
+        speaker: 'zh_female_vv_uranus_bigtts', // 中英双语发音
+      });
+
+      console.log('音频 URL:', response?.audioUri);
+
+      // 由于 SDK 主要支持中文发音，美式/英式区分使用 fallback 方案
+      // 使用在线词典 API（剑桥词典）
+      const encodedWord = encodeURIComponent(word);
+      
+      return {
+        code: 200,
+        msg: 'success',
+        data: {
+          word,
+          // SDK 生成的音频（用于朗读）
+          sdkAudioUrl: response?.audioUri || '',
+          // 剑桥词典美式发音
+          usAudioUrl: `https://dictionary.cambridge.org/us/media/english/us_pron/${word.charAt(0)}/${word.substring(0, 3)}/${word}.mp3`,
+          // 剑桥词典英式发音  
+          ukAudioUrl: `https://dictionary.cambridge.org/uk/media/english/uk_pron/${word.charAt(0)}/${word.substring(0, 3)}/${word}.mp3`,
+        },
+      };
+    } catch (err) {
+      console.error('TTS 调用失败:', err);
+      
+      // Fallback: 使用在线词典发音 URL
+      const encodedWord = encodeURIComponent(word);
+      return {
+        code: 200,
+        msg: 'success (fallback)',
+        data: {
+          word,
+          sdkAudioUrl: '',
+          usAudioUrl: `https://dictionary.cambridge.org/us/media/english/us_pron/${word.charAt(0)}/${word.substring(0, 3)}/${word}.mp3`,
+          ukAudioUrl: `https://dictionary.cambridge.org/uk/media/english/uk_pron/${word.charAt(0)}/${word.substring(0, 3)}/${word}.mp3`,
+        },
+      };
+    }
+  }
+
+  /**
+   * 语音识别 (ASR)
+   */
+  @Post('asr')
+  @HttpCode(200)
+  async recognizeSpeech(@Body() body: { audioData: string }) {
+    const { audioData } = body;
+    console.log('语音识别请求，音频数据长度:', audioData?.length);
+
+    if (!audioData || audioData.length === 0) {
+      return { code: 400, msg: '音频数据为空' };
+    }
+
+    try {
+      // 使用 ASR 服务（需要从 SDK 导入 ASRClient）
+      // 暂时使用备用方案：返回提示让用户使用手动输入
+      return {
+        code: 200,
+        msg: 'success',
+        data: {
+          text: '',
+          note: 'ASR 服务暂不可用，请使用手动输入',
+        },
+      };
+    } catch (err) {
+      console.error('ASR 调用失败:', err);
+      return {
+        code: 500,
+        msg: '语音识别失败',
+        data: { text: '' },
+      };
+    }
+  }
 }

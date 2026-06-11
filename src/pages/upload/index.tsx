@@ -46,14 +46,37 @@ const UploadPage = () => {
       });
 
       console.log('上传响应:', uploadRes);
+      console.log('上传响应 data 类型:', typeof uploadRes.data);
+      console.log('上传响应 data 内容:', uploadRes.data);
 
-      // uploadRes.data 是字符串，需要解析
-      const responseData = typeof uploadRes.data === 'string' 
-        ? JSON.parse(uploadRes.data) 
-        : uploadRes.data;
-      
-      if (responseData?.data?.imageUrl) {
-        setImageUrl(responseData.data.imageUrl);
+      // Taro.uploadFile 返回的 data 是字符串，需要解析
+      // 后端返回格式: { code: 200, msg: 'success', data: { imageUrl: '...' } }
+      let responseData: any;
+      if (typeof uploadRes.data === 'string') {
+        try {
+          responseData = JSON.parse(uploadRes.data);
+          console.log('解析后的 responseData:', responseData);
+          // 如果 responseData.data 也是字符串（某些情况下），再解析一次
+          if (typeof responseData.data === 'string') {
+            responseData.data = JSON.parse(responseData.data);
+          }
+        } catch (e) {
+          console.error('JSON 解析失败:', e);
+          responseData = uploadRes.data;
+        }
+      } else {
+        responseData = uploadRes.data;
+      }
+
+      // 提取 imageUrl
+      const extractedImageUrl = responseData?.data?.imageUrl || responseData?.imageUrl;
+      if (extractedImageUrl) {
+        console.log('获取到 imageUrl:', extractedImageUrl);
+        setImageUrl(extractedImageUrl);
+        Taro.showToast({ title: '图片上传成功', icon: 'success', duration: 1000 });
+      } else {
+        console.error('未能获取 imageUrl，responseData:', responseData);
+        Taro.showToast({ title: '上传失败，请重试', icon: 'none' });
       }
     } catch (error) {
       console.error('选择图片失败:', error);
