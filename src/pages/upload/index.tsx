@@ -1,29 +1,25 @@
-import { View, Text, Image } from '@tarojs/components';
-import Taro, { useLoad } from '@tarojs/taro';
-import { useState } from 'react';
-import { Network } from '@/network';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Camera, Upload, Loader, Check, ArrowLeft } from 'lucide-react-taro';
-import './index.css';
+// Fix: 修复图片识别数据解析路径（Bug 1）
+import { useState } from 'react'
+import { View, Text, Image } from '@tarojs/components'
+import Taro from '@tarojs/taro'
+import { Network } from '@/network'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Camera, ImageUp, ArrowLeft, Loader } from 'lucide-react-taro'
+import './index.css'
 
 interface WordItem {
-  word: string;
-  phonetic: string;
-  meanings: string[];
-  addedDate: string;
+  word: string
+  meanings: string[]
+  date: string
 }
 
-const UploadPage = () => {
-  const [imagePath, setImagePath] = useState<string>('');
-  const [imageUrl, setImageUrl] = useState<string>('');
-  const [isRecognizing, setIsRecognizing] = useState(false);
-  const [recognizedWords, setRecognizedWords] = useState<WordItem[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
-
-  useLoad(() => {
-    console.log('上传识别页加载');
-  });
+export default function UploadPage() {
+  const [imageUrl, setImageUrl] = useState('')
+  const [isUploading, setIsUploading] = useState(false)
+  const [isRecognizing, setIsRecognizing] = useState(false)
+  const [words, setWords] = useState<WordItem[]>([])
+  const [errorMsg, setErrorMsg] = useState('')
 
   // 选择图片
   const handleChooseImage = async () => {
@@ -31,270 +27,222 @@ const UploadPage = () => {
       const res = await Taro.chooseImage({
         count: 1,
         sizeType: ['compressed'],
-        sourceType: ['album', 'camera'],
-      });
+        sourceType: ['album', 'camera']
+      })
+      if (res.tempFilePaths && res.tempFilePaths.length > 0) {
+        await uploadImage(res.tempFilePaths[0])
+      }
+    } catch (err) {
+      console.error('选择图片失败:', err)
+    }
+  }
 
-      const tempFilePath = res.tempFilePaths[0];
-      setImagePath(tempFilePath);
-      setShowPreview(true);
-
-      // 上传图片到服务器
+  // Fix Bug 1: 正确解析 Network.uploadFile 返回数据
+  const uploadImage = async (filePath: string) => {
+    setIsUploading(true)
+    setErrorMsg('')
+    try {
       const uploadRes = await Network.uploadFile({
         url: '/api/dictation/upload-image',
-        filePath: tempFilePath,
-        name: 'image',
-      });
+        filePath,
+        name: 'image'
+      })
+      console.log('Upload response:', uploadRes)
 
-      console.log('上传响应:', uploadRes);
-      console.log('上传响应 data 类型:', typeof uploadRes.data);
-      console.log('上传响应 data 内容:', uploadRes.data);
-
-      // Taro.uploadFile 返回的 data 是字符串，需要解析
-      // 后端返回格式: { code: 200, msg: 'success', data: { imageUrl: '...' } }
-      let responseData: any;
-      if (typeof uploadRes.data === 'string') {
-        try {
-          responseData = JSON.parse(uploadRes.data);
-          console.log('解析后的 responseData:', responseData);
-          // 如果 responseData.data 也是字符串（某些情况下），再解析一次
-          if (typeof responseData.data === 'string') {
-            responseData.data = JSON.parse(responseData.data);
-          }
-        } catch (e) {
-          console.error('JSON 解析失败:', e);
-          responseData = uploadRes.data;
-        }
-      } else {
-        responseData = uploadRes.data;
+      // Network.uploadFile 返回 { statusCode, data: JSON字符串 }
+      // data 是后端响应体: { code, msg, data: { imageUrl, fileKey } }
+      let responseData: unknown = uploadRes?.data
+      if (typeof responseData === 'string') {
+        responseData = JSON.parse(responseData)
       }
 
-      // 提取 imageUrl
-      const extractedImageUrl = responseData?.data?.imageUrl || responseData?.imageUrl;
-      if (extractedImageUrl) {
-        console.log('获取到 imageUrl:', extractedImageUrl);
-        setImageUrl(extractedImageUrl);
-        Taro.showToast({ title: '图片上传成功', icon: 'success', duration: 1000 });
+      const dataObj = responseData as Record<string, unknown>
+      const innerData = dataObj?.data as Record<string, unknown> | undefined
+      const imageUrlFromServer = (innerData?.imageUrl || dataObj?.imageUrl) as string | undefined
+      if (imageUrlFromServer) {
+        setImageUrl(imageUrlFromServer)
+        console.log('Image URL set:', imageUrlFromServer)
+        Taro.showToast({ title: '上传成功', icon: 'success' })
       } else {
-        console.error('未能获取 imageUrl，responseData:', responseData);
-        Taro.showToast({ title: '上传失败，请重试', icon: 'none' });
+        setErrorMsg('上传失败，未获取到图片地址')
+        console.error('No imageUrl in response:', responseData)
       }
-    } catch (error) {
-      console.error('选择图片失败:', error);
-      Taro.showToast({
-        title: '选择图片失败',
-        icon: 'none',
-      });
+    } catch (err) {
+      console.error('上传失败:', err)
+      setErrorMsg('上传失败，请重试')
+    } finally {
+      setIsUploading(false)
     }
-  };
+  }
 
-  // 识别单词
+  // Fix Bug 1: 正确解析识别结果
   const handleRecognize = async () => {
     if (!imageUrl) {
-      Taro.showToast({
-        title: '请先上传图片',
-        icon: 'none',
-      });
-      return;
+      setErrorMsg('请先上传照片')
+      return
     }
-
-    setIsRecognizing(true);
+    setIsRecognizing(true)
+    setErrorMsg('')
     try {
       const res = await Network.request({
         url: '/api/dictation/recognize-all-words',
         method: 'POST',
-        data: { imageUrl },
-      });
+        data: { imageUrl }
+      })
+      console.log('Recognize response:', res)
 
-      console.log('识别响应:', res);
+      // Network.request 返回 { statusCode, data: 后端响应体 }
+      // 后端响应体: { code, msg, data: { words: [...], count } }
+      const responseData = res?.data
+      const wordsData = responseData?.data?.words || responseData?.words
 
-      const words = res?.data?.words || [];
-      if (words.length === 0) {
-        Taro.showToast({
-          title: '未识别到单词',
-          icon: 'none',
-        });
+      if (wordsData && Array.isArray(wordsData) && wordsData.length > 0) {
+        // 将识别结果转换为 WordItem 格式
+        const wordItems: WordItem[] = wordsData.map((w: { word: string; meanings?: string[] }) => ({
+          word: w.word,
+          meanings: w.meanings || [],
+          date: new Date().toISOString().split('T')[0]
+        }))
+        setWords(wordItems)
+        // Fix Bug 1: 存入新单词词库（覆盖替换）
+        Taro.setStorageSync('new_vocabulary', JSON.stringify(wordItems))
+        Taro.showToast({ title: `识别到 ${wordItems.length} 个单词`, icon: 'success' })
       } else {
-        // 添加入库日期
-        const today = new Date().toLocaleDateString('zh-CN');
-        const wordsWithDate = words.map((w: WordItem) => ({
-          ...w,
-          addedDate: today,
-        }));
-        setRecognizedWords(wordsWithDate);
+        setErrorMsg('未识别到单词，请确认图片清晰且包含英文单词')
       }
-    } catch (error) {
-      console.error('识别失败:', error);
-      Taro.showToast({
-        title: '识别失败，请重试',
-        icon: 'none',
-      });
+    } catch (err) {
+      console.error('识别失败:', err)
+      setErrorMsg('识别失败，请重试')
     } finally {
-      setIsRecognizing(false);
+      setIsRecognizing(false)
     }
-  };
+  }
 
-  // 确认并开始听写
-  const handleConfirm = async () => {
-    if (recognizedWords.length === 0) {
-      Taro.showToast({
-        title: '没有识别到单词',
-        icon: 'none',
-      });
-      return;
+  // 开始听写
+  const handleStartDictation = () => {
+    if (words.length === 0) {
+      setErrorMsg('请先识别单词')
+      return
     }
-
-    // 保存到新单词词库（覆盖）
-    Taro.setStorageSync('newWordsVocabulary', recognizedWords);
-
-    // 保存当前听写词库
-    Taro.setStorageSync('dictationWords', recognizedWords);
-    Taro.setStorageSync('dictationType', 'new');
-
-    Taro.showToast({
-      title: `已保存 ${recognizedWords.length} 个单词`,
-      icon: 'success',
-    });
-
-    // 跳转到听写页
-    setTimeout(() => {
-      Taro.navigateTo({
-        url: '/pages/dictation/index?type=new',
-      });
-    }, 1000);
-  };
-
-  // 返回首页
-  const handleBack = () => {
-    Taro.navigateBack();
-  };
+    Taro.navigateTo({
+      url: `/pages/dictation/index?type=new&words=${encodeURIComponent(JSON.stringify(words))}`
+    })
+  }
 
   return (
-    <View className="min-h-screen bg-white p-4">
-      {/* 头部 */}
-      <View className="flex items-center gap-3 mb-4">
-        <View onClick={handleBack}>
-          <ArrowLeft size={24} color="#3b82f6" />
+    <View className="flex flex-col min-h-screen bg-white">
+      {/* 顶部导航 */}
+      <View className="flex flex-row items-center px-4 py-3 border-b border-gray-200">
+        <View className="flex flex-row items-center" onClick={() => Taro.navigateBack()}>
+          <ArrowLeft size={20} color="#666" />
+          <Text className="block text-gray-600 ml-1">返回</Text>
         </View>
-        <Text className="block text-xl font-semibold text-gray-800">上传单词照片</Text>
+        <Text className="block text-lg font-semibold ml-4">上传单词照片</Text>
       </View>
 
-      {/* 上传区域 */}
-      {!showPreview ? (
-        <Card className="shadow-md">
-          <CardContent className="p-8">
-            <View
-              className="flex flex-col items-center justify-center gap-4 border-2 border-dashed border-gray-300 rounded-xl p-8"
-              onClick={handleChooseImage}
-            >
-              <View className="w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center">
-                <Camera size={32} color="#3b82f6" />
-              </View>
-              <Text className="block text-gray-600">点击拍照或选择照片</Text>
-              <Text className="block text-xs text-gray-400">支持包含单词列表的照片</Text>
-            </View>
-          </CardContent>
-        </Card>
-      ) : (
-        <View className="space-y-4">
-          {/* 图片预览 */}
-          <Card className="shadow-md">
-            <CardContent className="p-4">
+      <View className="flex-1 px-4 py-6">
+        {/* 图片预览区 */}
+        <View className="mb-6">
+          {imageUrl ? (
+            <View className="relative">
               <Image
-                src={imagePath}
-                className="w-full rounded-lg"
+                src={imageUrl}
+                className="w-full rounded-xl"
                 mode="widthFix"
+                style={{ maxHeight: '300px' }}
               />
-            </CardContent>
-          </Card>
-
-          {/* 操作按钮 */}
-          <View className="flex gap-3">
-            <Button
-              onClick={handleChooseImage}
-              className="flex-1 bg-gray-100 text-gray-700 rounded-xl"
-            >
-              <View className="flex items-center justify-center gap-2">
-                <Upload size={18} color="#6b7280" />
-                <Text>重新选择</Text>
-              </View>
-            </Button>
-            <Button
-              onClick={handleRecognize}
-              disabled={isRecognizing}
-              className="flex-1 bg-blue-500 text-white rounded-xl"
-            >
-              <View className="flex items-center justify-center gap-2">
-                {isRecognizing ? (
-                  <Loader size={18} color="#ffffff" />
-                ) : (
-                  <Check size={18} color="#ffffff" />
-                )}
-                <Text>{isRecognizing ? '识别中...' : '识别单词'}</Text>
-              </View>
-            </Button>
-          </View>
-
-          {/* 识别结果 */}
-          {recognizedWords.length > 0 && (
-            <Card className="shadow-md border-2 border-green-100">
-              <CardContent className="p-4">
-                <View className="flex items-center justify-between mb-3">
-                  <Text className="block text-lg font-semibold text-green-600">
-                    识别完成
-                  </Text>
-                  <Text className="text-sm text-gray-500">
-                    共 {recognizedWords.length} 个单词
-                  </Text>
-                </View>
-
-                {/* 单词列表预览 */}
-                <View className="max-h-60 overflow-y-auto space-y-2">
-                  {recognizedWords.map((word, index) => (
-                    <View
-                      key={index}
-                      className="flex items-center justify-between p-2 bg-gray-50 rounded-lg"
-                    >
-                      <View>
-                        <Text className="block font-medium text-gray-800">
-                          {word.word}
-                        </Text>
-                        {word.phonetic && (
-                          <Text className="block text-xs text-gray-500">
-                            {word.phonetic}
-                          </Text>
-                        )}
-                      </View>
-                      <Text className="text-sm text-gray-600">
-                        {word.meanings.join('；')}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-
-                {/* 确认按钮 */}
+              <View className="absolute top-2 right-2">
                 <Button
-                  onClick={handleConfirm}
-                  className="w-full mt-4 bg-green-500 text-white rounded-xl py-3"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleChooseImage}
                 >
-                  <View className="flex items-center justify-center gap-2">
-                    <Check size={20} color="#ffffff" />
-                    <Text className="font-semibold">确认并开始听写</Text>
-                  </View>
+                  重新选择
                 </Button>
-              </CardContent>
-            </Card>
+              </View>
+            </View>
+          ) : (
+            <View
+              className="flex flex-col items-center justify-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 py-16"
+              onClick={handleChooseImage}
+            >
+              {isUploading ? (
+                <>
+                  <Loader size={40} color="#3b82f6" />
+                  <Text className="block text-gray-400 mt-3">上传中...</Text>
+                </>
+              ) : (
+                <>
+                  <Camera size={48} color="#9ca3af" />
+                  <Text className="block text-gray-400 mt-3">点击拍照或选择图片</Text>
+                  <Text className="block text-gray-300 text-sm mt-1">支持 JPG/PNG 格式</Text>
+                </>
+              )}
+            </View>
           )}
         </View>
-      )}
 
-      {/* 使用提示 */}
-      <View className="mt-4 p-3 bg-blue-50 rounded-lg">
-        <Text className="block text-xs text-blue-600">
-          提示：照片中单词格式为「单词 / 音标 词性 中文含义」或「短语 中文含义」
-        </Text>
+        {/* 操作按钮 */}
+        <View className="flex flex-row gap-3 mb-6">
+          <Button
+            className="flex-1 bg-blue-500 text-white rounded-xl py-3"
+            onClick={handleRecognize}
+            disabled={!imageUrl || isRecognizing}
+          >
+            {isRecognizing ? '识别中...' : '识别单词'}
+          </Button>
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={handleChooseImage}
+          >
+            <ImageUp size={18} color="#666" />
+            <Text className="block text-gray-600 ml-1">选图片</Text>
+          </Button>
+        </View>
+
+        {/* 错误提示 */}
+        {errorMsg && (
+          <View className="bg-red-50 rounded-xl px-4 py-3 mb-4">
+            <Text className="block text-red-500 text-sm">{errorMsg}</Text>
+          </View>
+        )}
+
+        {/* 识别结果 */}
+        {words.length > 0 && (
+          <View className="mb-6">
+            <View className="flex flex-row items-center justify-between mb-3">
+              <Text className="block text-lg font-semibold">
+                识别结果 ({words.length} 个)
+              </Text>
+              <Badge variant="secondary">新单词词库</Badge>
+            </View>
+            <View className="bg-gray-50 rounded-xl p-4">
+              {words.map((item, index) => (
+                <View
+                  key={index}
+                  className="flex flex-row items-center justify-between py-2 border-b border-gray-100 last:border-b-0"
+                >
+                  <Text className="block text-base font-medium text-gray-800">{item.word}</Text>
+                  <Text className="block text-sm text-gray-500">
+                    {item.meanings.length > 0 ? item.meanings.join(' / ') : '待翻译'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* 开始听写按钮 */}
+        {words.length > 0 && (
+          <Button
+            className="w-full bg-green-500 text-white rounded-xl py-4 text-lg font-semibold"
+            onClick={handleStartDictation}
+          >
+            开始听写 ({words.length} 个单词)
+          </Button>
+        )}
       </View>
     </View>
-  );
-};
-
-export default UploadPage;
+  )
+}

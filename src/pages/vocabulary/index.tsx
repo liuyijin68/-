@@ -7,11 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Trash2, Plus, Pencil, ArrowLeft, Save } from 'lucide-react-taro';
 import './index.css';
 
+// Fix: 统一 WordItem 接口，与 upload/dictation 页面一致
 interface WordItem {
   word: string;
-  phonetic: string;
   meanings: string[];
-  addedDate: string;
+  date: string;
 }
 
 const VocabularyPage = () => {
@@ -27,23 +27,23 @@ const VocabularyPage = () => {
     loadVocabularies();
   });
 
-  // 加载两个词库
+  // Fix: 统一存储 key 命名
   const loadVocabularies = () => {
-    const storedNewWords = Taro.getStorageSync('newWordsVocabulary') || [];
-    const storedReviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
+    const storedNewWords = Taro.getStorageSync('new_vocabulary') || [];
+    const storedReviewWords = Taro.getStorageSync('review_vocabulary') || [];
     setNewWords(storedNewWords);
     setReviewWords(storedReviewWords);
   };
 
-  // 获取当前词库
+  // Fix: 统一存储 key
   const getCurrentWords = () => activeTab === 'new' ? newWords : reviewWords;
   const setCurrentWords = (words: WordItem[]) => {
     if (activeTab === 'new') {
       setNewWords(words);
-      Taro.setStorageSync('newWordsVocabulary', words);
+      Taro.setStorageSync('new_vocabulary', words);
     } else {
       setReviewWords(words);
-      Taro.setStorageSync('reviewWordsVocabulary', words);
+      Taro.setStorageSync('review_vocabulary', words);
     }
   };
 
@@ -69,7 +69,7 @@ const VocabularyPage = () => {
     setIsAdding(false);
   };
 
-  // 保存编辑
+  // Fix: 适配新的 WordItem 接口
   const handleSaveEdit = () => {
     if (!editingWord) return;
     
@@ -77,9 +77,8 @@ const VocabularyPage = () => {
     const index = (editingWord as WordItem & { _index: number })._index;
     words[index] = {
       word: newWordInput || editingWord.word,
-      phonetic: editingWord.phonetic,
       meanings: newMeaningInput ? newMeaningInput.split('；') : editingWord.meanings,
-      addedDate: editingWord.addedDate,
+      date: editingWord.date,
     };
     setCurrentWords(words);
     setEditingWord(null);
@@ -96,7 +95,7 @@ const VocabularyPage = () => {
     setNewMeaningInput('');
   };
 
-  // 添加单词
+  // Fix: 适配新的 WordItem 接口
   const handleAdd = () => {
     if (!newWordInput.trim()) {
       Taro.showToast({ title: '请输入单词', icon: 'none' });
@@ -110,9 +109,8 @@ const VocabularyPage = () => {
     const words = getCurrentWords();
     const newWord: WordItem = {
       word: newWordInput.trim(),
-      phonetic: '',
       meanings: newMeaningInput.trim().split('；'),
-      addedDate: new Date().toLocaleDateString('zh-CN'),
+      date: new Date().toLocaleDateString('zh-CN'),
     };
     
     // 检查是否已存在
@@ -208,14 +206,11 @@ const VocabularyPage = () => {
                 >
                   <View className="flex-1">
                     <Text className="block font-medium text-gray-800">{word.word}</Text>
-                    {word.phonetic && (
-                      <Text className="block text-xs text-gray-500">{word.phonetic}</Text>
-                    )}
                     <Text className="block text-sm text-gray-600">
                       {word.meanings.join('；')}
                     </Text>
                     <Text className="block text-xs text-gray-400">
-                      入库日期: {word.addedDate}
+                      入库日期: {word.date}
                     </Text>
                   </View>
                   <View className="flex gap-2">

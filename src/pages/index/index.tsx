@@ -22,11 +22,11 @@ const IndexPage = () => {
     loadVocabularyStats();
   });
 
-  // 加载词库统计
+  // Fix: 统一存储 key
   const loadVocabularyStats = async () => {
     try {
-      const newWords = Taro.getStorageSync('newWordsVocabulary') || [];
-      const reviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
+      const newWords = Taro.getStorageSync('new_vocabulary') || [];
+      const reviewWords = Taro.getStorageSync('review_vocabulary') || [];
       setStats({
         newWordsCount: newWords.length,
         reviewWordsCount: reviewWords.length,

@@ -1,716 +1,680 @@
-import { View, Text } from '@tarojs/components';
-import Taro, { useLoad } from '@tarojs/taro';
-import { useState, useEffect } from 'react';
-import { Network } from '@/network';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Volume2, Check, X, House, Mic, Keyboard, RefreshCcw } from 'lucide-react-taro';
-import './index.css';
+// Fix: 完整重写听写页面，修复所有5个Bug
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { View, Text, Canvas } from '@tarojs/components'
+import Taro from '@tarojs/taro'
+import { Network } from '@/network'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
+import { Volume2, Mic, Check, ArrowLeft, Pencil } from 'lucide-react-taro'
+import './index.css'
 
 interface WordItem {
-  word: string;
-  phonetic: string;
-  meanings: string[];
-  addedDate: string;
-  usPhonetic?: string;
-  ukPhonetic?: string;
+  word: string
+  meanings: string[]
+  date: string
 }
 
-interface DictationResult {
-  word: string;
-  spellingCorrect: boolean;
-  userSpelling: string;
-  meaningCorrect: boolean;
-  userMeaning: string;
-  isCorrect: boolean;
-  correctMeaning: string;
-  addedToReview: boolean;
+interface AudioResult {
+  usAudioUrl: string
+  ukAudioUrl: string
 }
 
-const DictationPage = () => {
-  // 平台检测（同时支持微信和抖音）
-  const isMiniApp = [Taro.ENV_TYPE.WEAPP, Taro.ENV_TYPE.TT].includes(Taro.getEnv() as any);
-
-  const [words, setWords] = useState<WordItem[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  // 阶段: ready -> listening -> spelling -> meaning -> result -> auto_next
-  const [phase, setPhase] = useState<'ready' | 'listening' | 'spelling' | 'meaning' | 'result'>('ready');
-  const [userSpelling, setUserSpelling] = useState('');
-  const [userMeaning, setUserMeaning] = useState('');
-  const [spellingCorrect, setSpellingCorrect] = useState<boolean | null>(null);
-  const [meaningCorrect, setMeaningCorrect] = useState<boolean | null>(null);
-  const [results, setResults] = useState<DictationResult[]>([]);
-  const [isChecking, setIsChecking] = useState(false);
-  const [dictationType, setDictationType] = useState<'new' | 'review'>('new');
-  const [recorderManager, setRecorderManager] = useState<Taro.RecorderManager | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [audioPath, setAudioPath] = useState('');
-  const [inputMode, setInputMode] = useState<'voice' | 'text'>('text');
-
-  useLoad(() => {
-    console.log('听写页加载');
-    const params = Taro.getCurrentInstance().router?.params;
-    const type = params?.type || 'new';
-    setDictationType(type as 'new' | 'review');
-    loadVocabulary(type as 'new' | 'review');
-  });
-
-  // 初始化录音管理器（仅小程序端）
-  useEffect(() => {
-    if (isMiniApp) {
-      const manager = Taro.getRecorderManager();
-      manager.onStart(() => {
-        console.log('录音开始');
-        setIsRecording(true);
-      });
-      manager.onStop((res) => {
-        console.log('录音结束，文件路径:', res.tempFilePath);
-        setAudioPath(res.tempFilePath);
-        setIsRecording(false);
-      });
-      manager.onError((err) => {
-        console.error('录音错误:', err);
-        Taro.showToast({ title: '录音失败', icon: 'none' });
-        setIsRecording(false);
-      });
-      setRecorderManager(manager);
+// Fix Bug 2: 使用 Taro.createInnerAudioContext 播放音频
+function playAudioUrl(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!url) {
+      reject(new Error('No audio URL'))
+      return
     }
-  }, [isMiniApp]);
-
-  // 加载词库
-  const loadVocabulary = (type: 'new' | 'review') => {
-    const storageKey = type === 'new' ? 'newWordsVocabulary' : 'reviewWordsVocabulary';
-    const storedWords = Taro.getStorageSync(storageKey);
-    console.log('加载词库:', type, storedWords);
-
-    if (storedWords && storedWords.length > 0) {
-      setWords(storedWords);
-      Taro.setStorageSync('dictationWords', storedWords);
-    } else {
-      Taro.showToast({ title: type === 'new' ? '没有新单词' : '复习词库为空', icon: 'none' });
-      setTimeout(() => {
-        Taro.navigateTo({ url: '/pages/index/index' });
-      }, 1500);
-    }
-  };
-
-  // 当前单词
-  const currentWord = words[currentIndex] || null;
-
-  // 开始听写（朗读单词 - 美式+英式各一次）
-  const handleStartDictation = async () => {
-    if (!currentWord) return;
-
-    setPhase('listening');
-
     try {
-      // 调用 TTS 接口朗读单词（美式+英式）
+      const audioCtx = Taro.createInnerAudioContext()
+      audioCtx.src = url
+      audioCtx.autoplay = true
+      audioCtx.onEnded(() => {
+        audioCtx.destroy()
+        resolve()
+      })
+      audioCtx.onError((err) => {
+        console.error('Audio play error:', err)
+        audioCtx.destroy()
+        reject(err)
+      })
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
+export default function DictationPage() {
+  const [wordList, setWordList] = useState<WordItem[]>([])
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [phase, setPhase] = useState<'loading' | 'playing' | 'spelling' | 'meaning' | 'complete'>('loading')
+  const [spellingInput, setSpellingInput] = useState('')
+  const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | ''>('')
+  const [meaningResult, setMeaningResult] = useState<'correct' | 'wrong' | ''>('')
+  const [isRecording, setIsRecording] = useState(false)
+  const [feedbackMsg, setFeedbackMsg] = useState('')
+  const [vocabularyType, setVocabularyType] = useState<'new' | 'review'>('new')
+
+  // Fix Bug 5: Canvas手写板
+  const [showCanvas, setShowCanvas] = useState(false)
+  const isDrawingRef = useRef(false)
+  const ctxRef = useRef<any>(null)
+
+  const currentWord = wordList[currentIndex]
+
+  // 初始化：从路由参数获取词库类型和单词列表
+  useEffect(() => {
+    const instance = Taro.getCurrentInstance()
+    const params = instance?.router?.params as Record<string, string> | undefined
+    if (params?.type) {
+      setVocabularyType(params.type as 'new' | 'review')
+    }
+    if (params?.words) {
+      try {
+        const words = JSON.parse(decodeURIComponent(params.words)) as WordItem[]
+        setWordList(words)
+        setTotalCount(words.length)
+        setPhase('playing')
+      } catch {
+        Taro.showToast({ title: '单词数据解析失败', icon: 'none' })
+      }
+    } else {
+      // 从本地存储加载
+      const key = params?.type === 'review' ? 'review_vocabulary' : 'new_vocabulary'
+      const stored = Taro.getStorageSync(key)
+      if (stored) {
+        try {
+          const words = JSON.parse(stored) as WordItem[]
+          setWordList(words)
+          setTotalCount(words.length)
+          setPhase('playing')
+        } catch {
+          Taro.showToast({ title: '词库数据解析失败', icon: 'none' })
+        }
+      } else {
+        Taro.showToast({ title: '词库为空', icon: 'none' })
+      }
+    }
+  }, [])
+
+  // Fix Bug 2: 播放单词发音（美式+英式）
+  const playWord = useCallback(async (word: string) => {
+    try {
       const res = await Network.request({
         url: '/api/dictation/speak-word-both',
         method: 'POST',
-        data: { word: currentWord.word },
-      });
-
-      console.log('朗读响应:', res);
-
-      // 如果返回了两个音频 URL，依次播放
-      if (res?.data?.usAudioUrl && res?.data?.ukAudioUrl) {
-        await playAudioSequence([res.data.usAudioUrl, res.data.ukAudioUrl]);
-      } else if (res?.data?.audioUrl) {
-        // 单一音频
-        await playSingleAudio(res.data.audioUrl);
+        data: { word },
+      })
+      const responseData = res?.data as Record<string, unknown>
+      const innerData = responseData?.data as AudioResult | undefined
+      if (responseData?.code === 200 && innerData) {
+        const { usAudioUrl, ukAudioUrl } = innerData
+        // 先播放美式发音
+        if (usAudioUrl) {
+          await playAudioUrl(usAudioUrl)
+        }
+        // 再播放英式发音
+        if (ukAudioUrl && ukAudioUrl !== usAudioUrl) {
+          await playAudioUrl(ukAudioUrl)
+        }
       } else {
-        // 没有音频，使用备用方案
-        console.log('无音频URL，进入拼写阶段');
-        setPhase('spelling');
+        Taro.showToast({ title: '无法获取发音', icon: 'none' })
       }
-    } catch (error) {
-      console.error('朗读失败:', error);
-      setPhase('spelling');
+    } catch {
+      Taro.showToast({ title: '播放发音失败', icon: 'none' })
     }
-  };
+  }, [])
 
-  // 依次播放多个音频
-  const playAudioSequence = async (audioUrls: string[]) => {
-    for (const url of audioUrls) {
-      await playSingleAudio(url);
-    }
-    setPhase('spelling');
-  };
-
-  // 播放单个音频
-  const playSingleAudio = (audioUrl: string): Promise<void> => {
-    return new Promise((resolve) => {
-      const innerAudioContext = Taro.createInnerAudioContext();
-      innerAudioContext.src = audioUrl;
-      innerAudioContext.onPlay(() => {
-        console.log('开始播放:', audioUrl);
-      });
-      innerAudioContext.onEnded(() => {
-        console.log('播放结束');
-        innerAudioContext.destroy();
-        resolve();
-      });
-      innerAudioContext.onError((err) => {
-        console.error('播放失败:', err);
-        innerAudioContext.destroy();
-        resolve(); // 即使失败也继续
-      });
-      innerAudioContext.play();
-    });
-  };
-
-  // 检查拼写
-  const handleCheckSpelling = async () => {
-    if (!userSpelling.trim()) {
-      Taro.showToast({ title: '请输入英文拼写', icon: 'none' });
-      return;
-    }
-
-    setIsChecking(true);
-
-    // 简单的拼写比对（忽略大小写和空格）
-    const correctSpelling = currentWord!.word.toLowerCase().replace(/\s+/g, '');
-    const userSpellingNormalized = userSpelling.trim().toLowerCase().replace(/\s+/g, '');
-
-    const isSpellingCorrect = correctSpelling === userSpellingNormalized;
-    setSpellingCorrect(isSpellingCorrect);
-
-    if (isSpellingCorrect) {
-      Taro.showToast({ title: '拼写正确！请说出中文含义', icon: 'success', duration: 1500 });
-      setPhase('meaning');
-    } else {
-      // 拼写错误，直接判定为错误，加入复习词库
-      const result: DictationResult = {
-        word: currentWord!.word,
-        spellingCorrect: false,
-        userSpelling: userSpelling.trim(),
-        meaningCorrect: false,
-        userMeaning: '',
-        isCorrect: false,
-        correctMeaning: currentWord!.meanings.join('；'),
-        addedToReview: dictationType === 'new',
-      };
-      setResults([...results, result]);
-
-      if (dictationType === 'new') {
-        addToReviewVocabulary(currentWord!);
-      }
-
-      setPhase('result');
-    }
-
-    setIsChecking(false);
-  };
-
-  // 开始录音
-  const handleStartRecording = () => {
-    if (!isMiniApp) {
-      Taro.showToast({ title: 'H5端暂不支持语音输入', icon: 'none' });
-      setInputMode('text');
-      return;
-    }
-
-    recorderManager?.start({
-      format: 'wav',
-      sampleRate: 16000,
-      numberOfChannels: 1,
-    });
-  };
-
-  // 结束录音并识别
-  const handleStopRecording = async () => {
-    if (!isMiniApp) return;
-    recorderManager?.stop();
-  };
-
-  // 录音结束后自动识别
+  // 开始播放当前单词
   useEffect(() => {
-    if (audioPath && phase === 'meaning') {
-      recognizeSpeech(audioPath);
+    if (phase === 'playing' && currentWord) {
+      playWord(currentWord.word).then(() => {
+        setPhase('spelling')
+      }).catch(() => {
+        setPhase('spelling')
+      })
     }
-  }, [audioPath]);
+  }, [phase, currentWord, playWord])
 
-  // 语音识别
-  const recognizeSpeech = async (path: string) => {
+  // Fix Bug 4: 中文含义比对 - trim + 忽略大小写 + 去掉标点
+  const checkMeaning = useCallback((correctMeanings: string[], userAnswer: string): boolean => {
+    const normalized = userAnswer.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '')
+    return correctMeanings.some((meaning) => {
+      const normalizedMeaning = meaning.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '')
+      return normalized === normalizedMeaning || normalizedMeaning.includes(normalized) || normalized.includes(normalizedMeaning)
+    })
+  }, [])
+
+  // Fix Bug 3: 录音识别 — 录音 → 上传到存储 → ASR识别
+  const startRecording = useCallback(() => {
+    const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
+    if (!isMiniApp) {
+      Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
+      return
+    }
     try {
-      // 读取音频文件并转 base64
-      const fileSystemManager = Taro.getFileSystemManager();
-      const arrayBuffer = fileSystemManager.readFileSync(path);
-      const base64 = Taro.arrayBufferToBase64(arrayBuffer as ArrayBuffer);
+      const recorderManager = Taro.getRecorderManager()
+      recorderManager.onStop((res) => {
+        setIsRecording(false)
+        if (res.tempFilePath) {
+          handleVoiceResult(res.tempFilePath)
+        }
+      })
+      recorderManager.onError(() => {
+        setIsRecording(false)
+        Taro.showToast({ title: '录音失败', icon: 'none' })
+      })
+      recorderManager.start({
+        format: 'wav',
+        sampleRate: 16000,
+        numberOfChannels: 1,
+      })
+      setIsRecording(true)
+    } catch {
+      Taro.showToast({ title: '录音功能不可用', icon: 'none' })
+    }
+  }, [])
 
-      // 调用 ASR 接口
+  const stopRecording = useCallback(() => {
+    try {
+      const recorderManager = Taro.getRecorderManager()
+      recorderManager.stop()
+    } catch {
+      setIsRecording(false)
+    }
+  }, [])
+
+  // Fix Bug 3: 录音后上传到存储，再调用ASR
+  const handleVoiceResult = async (tempFilePath: string) => {
+    try {
+      Taro.showLoading({ title: '识别中...' })
+      // Step 1: 上传录音文件到对象存储
+      const uploadRes = await Network.uploadFile({
+        url: '/api/dictation/upload-audio',
+        filePath: tempFilePath,
+        name: 'audio',
+      })
+      console.log('Audio upload response:', uploadRes)
+
+      let uploadData: Record<string, unknown> = (typeof uploadRes?.data === 'string' ? JSON.parse(uploadRes.data) : uploadRes?.data) as Record<string, unknown> || {}
+      const innerData = uploadData?.data as Record<string, unknown> | undefined
+      const audioUrl = (innerData?.audioUrl || uploadData?.audioUrl) as string | undefined
+
+      if (!audioUrl) {
+        Taro.hideLoading()
+        Taro.showToast({ title: '音频上传失败', icon: 'none' })
+        return
+      }
+
+      // Step 2: 调用ASR识别
       const res = await Network.request({
-        url: '/api/dictation/asr',
+        url: '/api/dictation/recognize-speech',
         method: 'POST',
-        data: { audioData: base64 },
-      });
+        data: { audioUrl },
+      })
+      const result = res?.data as Record<string, unknown>
+      const asrData = result?.data as { text: string } | undefined
+      Taro.hideLoading()
 
-      console.log('ASR 响应:', res);
-
-      const recognizedText = res?.data?.text || '';
-      if (recognizedText) {
-        setUserMeaning(recognizedText);
-        // 自动检查答案
-        handleCheckMeaning(recognizedText);
+      if (result?.code === 200 && asrData?.text) {
+        const recognizedText = asrData.text.trim()
+        console.log('ASR recognized:', recognizedText)
+        // Fix Bug 4: 比对中文含义
+        if (currentWord && checkMeaning(currentWord.meanings, recognizedText)) {
+          handleMeaningCorrect()
+        } else {
+          handleMeaningWrong()
+        }
       } else {
-        Taro.showToast({ title: '未识别到内容，请重试', icon: 'none' });
+        Taro.showToast({ title: '未识别到语音内容，请重试', icon: 'none' })
       }
-    } catch (error) {
-      console.error('语音识别失败:', error);
-      Taro.showToast({ title: '识别失败，请手动输入', icon: 'none' });
-      setInputMode('text');
+    } catch (err) {
+      Taro.hideLoading()
+      console.error('Voice recognition error:', err)
+      Taro.showToast({ title: '语音识别失败，请手动输入含义', icon: 'none' })
     }
-    setAudioPath('');
-  };
+  }
 
-  // 检查中文含义
-  const handleCheckMeaning = async (meaning?: string) => {
-    const answer = meaning || userMeaning;
-    if (!answer.trim()) {
-      Taro.showToast({ title: '请输入或说出中文含义', icon: 'none' });
-      return;
-    }
-
-    setIsChecking(true);
-
-    try {
-      const res = await Network.request({
-        url: '/api/dictation/check-answer',
-        method: 'POST',
-        data: {
-          word: currentWord!.word,
-          correctMeanings: currentWord!.meanings,
-          userAnswer: answer.trim(),
-        },
-      });
-
-      console.log('含义检查响应:', res);
-
-      const correct = res?.data?.isCorrect || false;
-      setMeaningCorrect(correct);
-
-      const result: DictationResult = {
-        word: currentWord!.word,
-        spellingCorrect: true,
-        userSpelling: userSpelling.trim(),
-        meaningCorrect: correct,
-        userMeaning: answer.trim(),
-        isCorrect: correct,
-        correctMeaning: res?.data?.matchedMeaning || currentWord!.meanings.join('；'),
-        addedToReview: !correct && dictationType === 'new',
-      };
-      setResults([...results, result]);
-
-      // 如果是复习词库且答对了，从复习词库删除
-      if (dictationType === 'review' && correct) {
-        removeFromReviewVocabulary(currentWord!.word);
-      }
-
-      // 如果是新单词词库且答错了，加入复习词库
-      if (!correct && dictationType === 'new') {
-        addToReviewVocabulary(currentWord!);
-      }
-
-      setPhase('result');
-
-      // 如果正确，自动继续下一个
-      if (correct) {
-        setTimeout(() => {
-          moveToNext();
-        }, 1000);
-      }
-    } catch (error) {
-      console.error('检查答案失败:', error);
-      Taro.showToast({ title: '检查失败，请重试', icon: 'none' });
-    } finally {
-      setIsChecking(false);
-    }
-  };
-
-  // 加入复习词库
-  const addToReviewVocabulary = (word: WordItem) => {
-    const reviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
-    const exists = reviewWords.some((w: WordItem) => w.word === word.word);
-    if (!exists) {
-      reviewWords.push({
-        ...word,
-        addedDate: new Date().toLocaleDateString('zh-CN'),
-      });
-      Taro.setStorageSync('reviewWordsVocabulary', reviewWords);
-      console.log('已加入复习词库:', word.word);
-    }
-  };
-
-  // 从复习词库删除
-  const removeFromReviewVocabulary = (wordText: string) => {
-    const reviewWords = Taro.getStorageSync('reviewWordsVocabulary') || [];
-    const updatedWords = reviewWords.filter((w: WordItem) => w.word !== wordText);
-    Taro.setStorageSync('reviewWordsVocabulary', updatedWords);
-    console.log('已从复习词库移除:', wordText);
-  };
-
-  // 进入下一个单词
-  const moveToNext = () => {
-    setUserSpelling('');
-    setUserMeaning('');
-    setSpellingCorrect(null);
-    setMeaningCorrect(null);
-    setAudioPath('');
-
-    if (currentIndex < words.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-      setPhase('ready');
+  // 检查英文拼写
+  const handleSpellingSubmit = () => {
+    if (!currentWord) return
+    // Fix Bug 4: trim + 忽略大小写
+    const normalized = spellingInput.trim().toLowerCase()
+    const target = currentWord.word.trim().toLowerCase()
+    if (normalized === target) {
+      setSpellingResult('correct')
+      setFeedbackMsg('拼写正确！请说出中文含义')
+      setPhase('meaning')
     } else {
-      showFinalResults();
+      setSpellingResult('wrong')
+      setFeedbackMsg(`拼写错误，正确答案是: ${currentWord.word}`)
+      // 拼写错误也加入复习库
+      addToReview(currentWord)
+      setTimeout(() => {
+        setSpellingResult('')
+        setFeedbackMsg('')
+        setSpellingInput('')
+        goToNext()
+      }, 2000)
     }
-  };
+  }
 
-  // 显示最终结果
-  const showFinalResults = () => {
-    const correctCount = results.filter(r => r.isCorrect).length;
-    const wrongCount = results.filter(r => !r.isCorrect).length;
-
-    Taro.showModal({
-      title: '听写完成',
-      content: `正确: ${correctCount} 个\n错误: ${wrongCount} 个\n已加入复习词库: ${results.filter(r => r.addedToReview).length} 个`,
-      showCancel: false,
-      confirmText: '返回首页',
-      success: () => {
-        Taro.navigateTo({ url: '/pages/index/index' });
-      },
-    });
-  };
-
-  // 用户说不知道
-  const handleUnknown = () => {
-    const result: DictationResult = {
-      word: currentWord!.word,
-      spellingCorrect: false,
-      userSpelling: '不知道',
-      meaningCorrect: false,
-      userMeaning: '不知道',
-      isCorrect: false,
-      correctMeaning: currentWord!.meanings.join('；'),
-      addedToReview: true,
-    };
-    setResults([...results, result]);
-
-    if (dictationType === 'new') {
-      addToReviewVocabulary(currentWord!);
+  // Fix Bug 3: 正确时自动继续
+  const handleMeaningCorrect = () => {
+    setMeaningResult('correct')
+    setFeedbackMsg('回答正确！')
+    setCorrectCount((prev) => prev + 1)
+    // 如果是复习词库，从复习库中删除
+    if (vocabularyType === 'review') {
+      removeFromReview(currentWord)
     }
+    setTimeout(() => {
+      setMeaningResult('')
+      setFeedbackMsg('')
+      setSpellingInput('')
+      goToNext()
+    }, 1500)
+  }
 
-    moveToNext();
-  };
+  const handleMeaningWrong = () => {
+    setMeaningResult('wrong')
+    setFeedbackMsg(`错误！正确含义: ${currentWord?.meanings.join(' / ')}`)
+    // Fix Bug 3: 答错加入复习库
+    addToReview(currentWord)
+    setTimeout(() => {
+      setMeaningResult('')
+      setFeedbackMsg('')
+      setSpellingInput('')
+      goToNext()
+    }, 2500)
+  }
 
-  // 返回首页
-  const handleBackToHome = () => {
-    Taro.navigateTo({ url: '/pages/index/index' });
-  };
+  // 用户说"不知道"
+  const handleDontKnow = () => {
+    if (!currentWord) return
+    setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings.join(' / ')}`)
+    addToReview(currentWord)
+    setTimeout(() => {
+      setFeedbackMsg('')
+      setSpellingInput('')
+      goToNext()
+    }, 2500)
+  }
 
-  // 重新听写当前单词
-  const handleRepeatWord = () => {
-    setPhase('ready');
-    setUserSpelling('');
-    setUserMeaning('');
-    setSpellingCorrect(null);
-    setMeaningCorrect(null);
-  };
+  // Fix Bug 3: 加入复习词库
+  const addToReview = (word: WordItem) => {
+    try {
+      const stored = Taro.getStorageSync('review_vocabulary')
+      const reviewList: WordItem[] = stored ? JSON.parse(stored) : []
+      if (!reviewList.some((w) => w.word === word.word)) {
+        reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
+        Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
+      }
+    } catch {
+      // ignore
+    }
+  }
 
-  // 进度计算
-  const progress = ((currentIndex + 1) / words.length) * 100;
+  // Fix Bug 3: 从复习词库删除
+  const removeFromReview = (word: WordItem) => {
+    try {
+      const stored = Taro.getStorageSync('review_vocabulary')
+      if (stored) {
+        const reviewList: WordItem[] = JSON.parse(stored)
+        const updated = reviewList.filter((w) => w.word !== word.word)
+        Taro.setStorageSync('review_vocabulary', JSON.stringify(updated))
+      }
+    } catch {
+      // ignore
+    }
+  }
 
-  return (
-    <View className="min-h-screen bg-white p-4">
-      {/* 顶部进度 */}
-      <View className="flex items-center justify-between mb-4">
-        <Text className="block text-sm text-gray-500">
-          {dictationType === 'new' ? '新单词听写' : '复习听写'} - {currentIndex + 1}/{words.length}
+  const goToNext = () => {
+    if (currentIndex + 1 >= wordList.length) {
+      setPhase('complete')
+    } else {
+      setCurrentIndex((prev) => prev + 1)
+      setPhase('playing')
+    }
+  }
+
+  // Fix Bug 5: Canvas手写板 — 使用 Taro Canvas 2D API
+  const initCanvas = useCallback(() => {
+    if (!showCanvas) return
+    // 延迟初始化确保 Canvas 已挂载
+    setTimeout(() => {
+      const query = Taro.createSelectorQuery()
+      query.select('#handwritingCanvas').fields({ node: true, size: true }).exec((res) => {
+        if (res && res[0] && res[0].node) {
+          const canvas = res[0].node
+          const ctx = canvas.getContext('2d')
+          const dpr = Taro.getSystemInfoSync().pixelRatio
+          canvas.width = res[0].width * dpr
+          canvas.height = res[0].height * dpr
+          ctx.scale(dpr, dpr)
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.lineWidth = 3
+          ctx.strokeStyle = '#333'
+          ctxRef.current = ctx
+        }
+      })
+    }, 200)
+  }, [showCanvas])
+
+  useEffect(() => {
+    initCanvas()
+  }, [initCanvas])
+
+  const handleTouchStart = (e: any) => {
+    isDrawingRef.current = true
+    const touch = e.touches?.[0]
+    if (touch && ctxRef.current) {
+      const ctx = ctxRef.current
+      ctx.beginPath()
+      ctx.moveTo(touch.x, touch.y)
+    }
+  }
+
+  const handleTouchMove = (e: any) => {
+    if (!isDrawingRef.current) return
+    const touch = e.touches?.[0]
+    if (touch && ctxRef.current) {
+      const ctx = ctxRef.current
+      ctx.lineTo(touch.x, touch.y)
+      ctx.stroke()
+    }
+  }
+
+  const handleTouchEnd = () => {
+    isDrawingRef.current = false
+    if (ctxRef.current) {
+      ctxRef.current.closePath()
+    }
+  }
+
+  const clearCanvas = () => {
+    if (ctxRef.current) {
+      const query = Taro.createSelectorQuery()
+      query.select('#handwritingCanvas').fields({ node: true, size: true }).exec((res) => {
+        if (res && res[0] && res[0].node) {
+          const canvas = res[0].node
+          const ctx = canvas.getContext('2d')
+          const dpr = Taro.getSystemInfoSync().pixelRatio
+          ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+          ctx.lineCap = 'round'
+          ctx.lineJoin = 'round'
+          ctx.lineWidth = 3
+          ctx.strokeStyle = '#333'
+          ctxRef.current = ctx
+        }
+      })
+    }
+  }
+
+  // Fix Bug 5: 手写识别提交 — 导出Canvas图片并发送给LLM识别
+  const handleHandwritingSubmit = async () => {
+    try {
+      Taro.showLoading({ title: '识别中...' })
+      // 导出Canvas为图片
+      const res = await Taro.canvasToTempFilePath({
+        canvasId: 'handwritingCanvas',
+        fileType: 'png',
+      })
+      if (res.tempFilePath) {
+        // 上传手写图片
+        const uploadRes = await Network.uploadFile({
+          url: '/api/dictation/upload-image',
+          filePath: res.tempFilePath,
+          name: 'image',
+        })
+        let uploadData: Record<string, unknown> = (typeof uploadRes?.data === 'string' ? JSON.parse(uploadRes.data) : uploadRes?.data) as Record<string, unknown> || {}
+        const innerData = uploadData?.data as Record<string, unknown> | undefined
+        const imageUrl = (innerData?.imageUrl || uploadData?.imageUrl) as string | undefined
+
+        if (imageUrl) {
+          // 调用LLM识别手写英文
+          const recognizeRes = await Network.request({
+            url: '/api/dictation/recognize-handwriting',
+            method: 'POST',
+            data: { imageUrl },
+          })
+          const result = recognizeRes?.data as Record<string, unknown>
+          const hwData = result?.data as { text: string } | undefined
+          Taro.hideLoading()
+          if (result?.code === 200 && hwData?.text) {
+            setSpellingInput(hwData.text.trim())
+            setShowCanvas(false)
+            Taro.showToast({ title: '识别成功', icon: 'success' })
+          } else {
+            Taro.showToast({ title: '未识别到文字', icon: 'none' })
+          }
+        } else {
+          Taro.hideLoading()
+          Taro.showToast({ title: '上传失败', icon: 'none' })
+        }
+      } else {
+        Taro.hideLoading()
+        Taro.showToast({ title: '导出图片失败', icon: 'none' })
+      }
+    } catch (err) {
+      Taro.hideLoading()
+      console.error('Handwriting recognition error:', err)
+      Taro.showToast({ title: '识别失败，请手动输入', icon: 'none' })
+    }
+  }
+
+  // 加载状态
+  if (phase === 'loading') {
+    return (
+      <View className="flex flex-col items-center justify-center h-screen bg-white">
+        <Text className="block text-gray-500 text-lg">加载中...</Text>
+      </View>
+    )
+  }
+
+  // 完成状态
+  if (phase === 'complete') {
+    return (
+      <View className="flex flex-col items-center justify-center h-screen bg-white px-6">
+        <Check size={64} color="#22c55e" />
+        <Text className="block text-2xl font-bold mt-4 mb-2">听写完成！</Text>
+        <Text className="block text-gray-500 text-lg mb-6">
+          正确 {correctCount} / {totalCount}
         </Text>
-        <View className="flex-1 mx-3">
-          <View className="h-2 bg-gray-200 rounded-full overflow-hidden">
-            <View
-              className="h-full bg-blue-500 rounded-full"
-              style={{ width: `${progress}%` }}
-            />
+        <Progress value={(correctCount / totalCount) * 100} className="w-full mb-6" />
+        <Button
+          className="w-full bg-blue-500 text-white rounded-xl py-3"
+          onClick={() => Taro.navigateBack()}
+        >
+          返回首页
+        </Button>
+      </View>
+    )
+  }
+
+  // 手写板弹窗
+  if (showCanvas) {
+    return (
+      <View className="flex flex-col h-screen bg-white">
+        <View className="flex flex-row items-center justify-between px-4 py-3 border-b border-gray-200">
+          <View className="flex flex-row items-center" onClick={() => { setShowCanvas(false); clearCanvas() }}>
+            <ArrowLeft size={20} color="#666" />
+            <Text className="block text-gray-600 ml-1">返回</Text>
+          </View>
+          <Text className="block text-lg font-semibold">手写输入</Text>
+          <View className="flex flex-row gap-2">
+            <Button size="sm" variant="outline" onClick={clearCanvas}>清除</Button>
+            <Button size="sm" onClick={handleHandwritingSubmit}>确认</Button>
           </View>
         </View>
-        <View onClick={handleBackToHome}>
-          <House size={20} color="#6b7280" />
+        <View
+          className="flex-1 bg-gray-50 m-4 rounded-xl border border-gray-300 overflow-hidden"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          <Canvas
+            type="2d"
+            id="handwritingCanvas"
+            className="w-full h-full"
+            disableScroll
+          />
         </View>
       </View>
+    )
+  }
 
-      {/* 单词卡片 */}
-      <Card className="shadow-lg mb-4">
-        <CardContent className="p-6">
-          {/* 准备阶段 */}
-          {phase === 'ready' && (
-            <View className="text-center py-8">
-              <Text className="block text-lg text-gray-600 mb-4">
-                准备听写第 {currentIndex + 1} 个单词
-              </Text>
-              <Button
-                onClick={handleStartDictation}
-                className="bg-blue-500 text-white rounded-full px-8 py-3"
-              >
-                <View className="flex items-center justify-center gap-2">
-                  <Volume2 size={20} color="#ffffff" />
-                  <Text className="text-white font-semibold">开始听写</Text>
-                </View>
-              </Button>
-            </View>
+  return (
+    <View className="flex flex-col h-screen bg-white">
+      {/* 顶部导航 */}
+      <View className="flex flex-row items-center justify-between px-4 py-3 border-b border-gray-200">
+        <View className="flex flex-row items-center" onClick={() => Taro.navigateBack()}>
+          <ArrowLeft size={20} color="#666" />
+          <Text className="block text-gray-600 ml-1">返回</Text>
+        </View>
+        <Text className="block text-lg font-semibold">
+          {vocabularyType === 'review' ? '复习听写' : '新单词听写'}
+        </Text>
+        <Badge variant="secondary">
+          {currentIndex + 1}/{totalCount}
+        </Badge>
+      </View>
+
+      {/* 进度条 */}
+      <Progress value={((currentIndex + 1) / totalCount) * 100} className="mx-4 mt-3" />
+
+      {/* 主内容区 */}
+      <View className="flex-1 flex flex-col items-center justify-center px-6">
+        {/* 单词显示 */}
+        <View className="mb-8 text-center">
+          {phase === 'playing' && (
+            <>
+              <Volume2 size={48} color="#3b82f6" className="mb-4" />
+              <Text className="block text-gray-500 mb-2">正在朗读单词...</Text>
+              <Text className="block text-3xl font-bold text-gray-800">{currentWord?.word}</Text>
+            </>
           )}
 
-          {/* 听力阶段 */}
-          {phase === 'listening' && (
-            <View className="text-center py-8">
-              <Text className="block text-lg text-gray-600 mb-2">
-                正在朗读单词...
-              </Text>
-              <Text className="block text-sm text-gray-400 mb-4">
-                （美式发音 + 英式发音）
-              </Text>
-              <View className="animate-pulse">
-                <Volume2 size={48} color="#3b82f6" />
+          {(phase === 'spelling' || phase === 'meaning') && (
+            <>
+              <View className="flex flex-row items-center gap-2 mb-4">
+                <Volume2
+                  size={24}
+                  color="#3b82f6"
+                  onClick={() => playWord(currentWord?.word || '')}
+                />
+                <Text className="block text-gray-400 text-sm">点击重新播放</Text>
               </View>
-              <Text className="block text-sm text-gray-500 mt-4">
-                请仔细听，然后在下方输入英文拼写
-              </Text>
-            </View>
+              <Text className="block text-3xl font-bold text-gray-800 mb-6">{currentWord?.word}</Text>
+            </>
           )}
+        </View>
 
-          {/* 拼写阶段 */}
-          {phase === 'spelling' && (
-            <View className="py-6">
-              <Text className="block text-lg font-semibold text-gray-800 mb-4">
-                请输入英文拼写：
-              </Text>
-              <View className="bg-gray-50 rounded-xl px-4 py-3 mb-4">
+        {/* 拼写输入区 */}
+        {phase === 'spelling' && (
+          <View className="w-full">
+            <Text className="block text-gray-500 text-sm mb-2">请输入英文拼写：</Text>
+            <View className="flex flex-row gap-2">
+              {/* Fix: 使用 @/components/ui/input */}
+              <View className="flex-1">
                 <Input
-                  className="w-full bg-transparent"
-                  placeholder="输入你听到的单词或短语..."
-                  value={userSpelling}
-                  onInput={(e) => setUserSpelling(e.detail.value)}
+                  className="bg-gray-50 rounded-xl border-gray-200"
+                  placeholder="输入英文单词..."
+                  value={spellingInput}
+                  onInput={(e) => setSpellingInput(e.detail.value)}
+                  focus
                 />
               </View>
-              <View className="flex gap-3">
-                <Button
-                  onClick={handleCheckSpelling}
-                  disabled={isChecking}
-                  className="flex-1 bg-blue-500 text-white rounded-lg"
-                >
-                  <Text className="text-white">{isChecking ? '检查中...' : '确认拼写'}</Text>
-                </Button>
-                <Button
-                  onClick={handleStartDictation}
-                  className="flex-shrink-0 bg-gray-100 rounded-lg"
-                >
-                  <RefreshCcw size={18} color="#6b7280" />
-                </Button>
-              </View>
+              {/* Fix Bug 5: 手写输入按钮 */}
               <Button
-                onClick={handleUnknown}
-                className="w-full mt-3 bg-gray-200 text-gray-600 rounded-lg"
+                size="sm"
+                variant="outline"
+                onClick={() => setShowCanvas(true)}
               >
-                <Text className="text-gray-600">不知道</Text>
+                <Pencil size={18} color="#666" />
               </Button>
             </View>
-          )}
+            <Button
+              className="w-full bg-blue-500 text-white rounded-xl py-3 mt-4"
+              onClick={handleSpellingSubmit}
+              disabled={!spellingInput.trim()}
+            >
+              提交拼写
+            </Button>
+          </View>
+        )}
 
-          {/* 含义阶段 */}
-          {phase === 'meaning' && (
-            <View className="py-6">
-              <View className="text-center mb-4">
-                <Text className="block text-lg font-semibold text-green-600">
-                  拼写正确！
-                </Text>
-                <Text className="block text-sm text-gray-500">
-                  单词: {currentWord?.word}
-                </Text>
-              </View>
-              <Text className="block text-lg font-semibold text-gray-800 mb-4">
-                请说出或输入中文含义：
-              </Text>
-
-              {/* 输入模式切换 */}
-              <View className="flex gap-2 mb-4">
-                <Button
-                  onClick={() => setInputMode('voice')}
-                  className={`flex-1 rounded-lg ${inputMode === 'voice' ? 'bg-blue-500' : 'bg-gray-100'}`}
-                >
-                  <View className="flex items-center justify-center gap-2">
-                    <Mic size={18} color={inputMode === 'voice' ? '#ffffff' : '#6b7280'} />
-                    <Text className={inputMode === 'voice' ? 'text-white' : 'text-gray-600'}>语音输入</Text>
-                  </View>
-                </Button>
-                <Button
-                  onClick={() => setInputMode('text')}
-                  className={`flex-1 rounded-lg ${inputMode === 'text' ? 'bg-blue-500' : 'bg-gray-100'}`}
-                >
-                  <View className="flex items-center justify-center gap-2">
-                    <Keyboard size={18} color={inputMode === 'text' ? '#ffffff' : '#6b7280'} />
-                    <Text className={inputMode === 'text' ? 'text-white' : 'text-gray-600'}>手动输入</Text>
-                  </View>
-                </Button>
-              </View>
-
-              {/* 语音输入 */}
-              {inputMode === 'voice' && (
-                <View className="text-center py-4">
-                  {isMiniApp ? (
-                    <>
-                      <Button
-                        onClick={isRecording ? handleStopRecording : handleStartRecording}
-                        className={`rounded-full px-8 py-4 ${isRecording ? 'bg-red-500' : 'bg-blue-500'}`}
-                      >
-                        <Mic size={32} color="#ffffff" />
-                      </Button>
-                      <Text className="block text-sm text-gray-500 mt-2">
-                        {isRecording ? '正在录音，点击停止' : '点击开始录音'}
-                      </Text>
-                    </>
-                  ) : (
-                    <Text className="block text-gray-500">
-                      语音输入仅在小程序中可用{'\n'}请使用手动输入
-                    </Text>
-                  )}
-                </View>
-              )}
-
-              {/* 手动输入 */}
-              {inputMode === 'text' && (
-                <View>
-                  <View className="bg-gray-50 rounded-xl px-4 py-3 mb-4">
-                    <Input
-                      className="w-full bg-transparent"
-                      placeholder="输入中文含义..."
-                      value={userMeaning}
-                      onInput={(e) => setUserMeaning(e.detail.value)}
-                    />
-                  </View>
-                  <Button
-                    onClick={() => handleCheckMeaning()}
-                    disabled={isChecking}
-                    className="w-full bg-green-500 text-white rounded-lg"
-                  >
-                    <Text className="text-white">{isChecking ? '检查中...' : '确认含义'}</Text>
-                  </Button>
-                </View>
-              )}
-
+        {/* 中文含义输入区 */}
+        {phase === 'meaning' && (
+          <View className="w-full">
+            <Text className="block text-gray-500 text-sm mb-2">请说出中文含义：</Text>
+            <View className="flex flex-row gap-3 justify-center mb-4">
+              {/* Fix Bug 3: 录音按钮 */}
               <Button
-                onClick={handleUnknown}
-                className="w-full mt-3 bg-gray-200 text-gray-600 rounded-lg"
+                size="lg"
+                className={`rounded-full w-16 h-16 flex items-center justify-center ${isRecording ? 'bg-red-500' : 'bg-blue-500'}`}
+                onTouchStart={startRecording}
+                onTouchEnd={stopRecording}
               >
-                <Text className="text-gray-600">不知道</Text>
+                <Mic size={28} color="#fff" />
               </Button>
             </View>
-          )}
-
-          {/* 结果阶段 */}
-          {phase === 'result' && (
-            <View className="py-6">
-              <View className="text-center mb-4">
-                {spellingCorrect ? (
-                  meaningCorrect ? (
-                    <View className="flex items-center justify-center gap-2">
-                      <Check size={32} color="#22c55e" />
-                      <Text className="block text-lg font-semibold text-green-600">完全正确！</Text>
-                    </View>
-                  ) : (
-                    <View className="flex items-center justify-center gap-2">
-                      <X size={32} color="#ef4444" />
-                      <Text className="block text-lg font-semibold text-red-600">含义错误</Text>
-                    </View>
-                  )
-                ) : (
-                  <View className="flex items-center justify-center gap-2">
-                    <X size={32} color="#ef4444" />
-                    <Text className="block text-lg font-semibold text-red-600">拼写错误</Text>
-                  </View>
-                )}
-              </View>
-
-              <View className="bg-gray-50 rounded-lg p-4 mb-4">
-                <Text className="block text-sm text-gray-500 mb-2">正确答案：</Text>
-                <Text className="block text-lg font-semibold text-gray-800">
-                  {currentWord?.word}
-                </Text>
-                {currentWord?.phonetic && (
-                  <Text className="block text-sm text-gray-600">
-                    音标: {currentWord.phonetic}
-                  </Text>
-                )}
-                <Text className="block text-sm text-gray-600">
-                  含义: {currentWord?.meanings?.join('；')}
-                </Text>
-              </View>
-
-              <View className="bg-blue-50 rounded-lg p-4 mb-4">
-                <Text className="block text-sm text-gray-500 mb-2">你的答案：</Text>
-                <Text className="block text-base text-gray-800">
-                  拼写: {userSpelling || '不知道'}
-                  {spellingCorrect ? ' ✓' : ' ✗'}
-                </Text>
-                <Text className="block text-base text-gray-800">
-                  含义: {userMeaning || '未作答'}
-                  {meaningCorrect === null ? '' : meaningCorrect ? ' ✓' : ' ✗'}
-                </Text>
-              </View>
-
-              {meaningCorrect && (
-                <Text className="block text-sm text-green-600 text-center mb-4">
-                  自动进入下一个单词...
-                </Text>
-              )}
-
-              <View className="flex gap-3">
-                <Button
-                  onClick={handleRepeatWord}
-                  className="flex-1 bg-gray-100 rounded-lg"
-                >
-                  <RefreshCcw size={18} color="#6b7280" />
-                  <Text className="text-gray-600 ml-2">重新听写</Text>
-                </Button>
-                <Button
-                  onClick={moveToNext}
-                  className="flex-1 bg-blue-500 text-white rounded-lg"
-                >
-                  <Text className="text-white">下一个</Text>
-                </Button>
-              </View>
-            </View>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 结果统计 */}
-      {results.length > 0 && (
-        <Card className="mt-4">
-          <CardContent className="p-4">
-            <Text className="block text-sm text-gray-500 mb-2">
-              已完成: {results.length}/{words.length}
+            <Text className="block text-center text-gray-400 text-sm mb-4">
+              {isRecording ? '正在录音...松手停止' : '按住录音，松手识别'}
             </Text>
-            <View className="flex gap-4">
-              <View className="flex items-center gap-1">
-                <Check size={16} color="#22c55e" />
-                <Text className="block text-sm text-green-600">
-                  {results.filter(r => r.isCorrect).length}
-                </Text>
-              </View>
-              <View className="flex items-center gap-1">
-                <X size={16} color="#ef4444" />
-                <Text className="block text-sm text-red-600">
-                  {results.filter(r => !r.isCorrect).length}
-                </Text>
-              </View>
+            <View className="flex flex-row gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={handleDontKnow}
+              >
+                不知道
+              </Button>
             </View>
-          </CardContent>
-        </Card>
-      )}
-    </View>
-  );
-};
+          </View>
+        )}
 
-export default DictationPage;
+        {/* 反馈信息 */}
+        {feedbackMsg && (
+          <View className={`mt-6 px-4 py-3 rounded-xl w-full text-center ${
+            spellingResult === 'correct' || meaningResult === 'correct'
+              ? 'bg-green-50'
+              : spellingResult === 'wrong' || meaningResult === 'wrong'
+                ? 'bg-red-50'
+                : 'bg-yellow-50'
+          }`}
+          >
+            <Text className={`block text-base ${
+              spellingResult === 'correct' || meaningResult === 'correct'
+                ? 'text-green-600'
+                : spellingResult === 'wrong' || meaningResult === 'wrong'
+                  ? 'text-red-600'
+                  : 'text-yellow-600'
+            }`}
+            >
+              {feedbackMsg}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {/* 底部操作栏 */}
+      <View className="px-4 py-3 border-t border-gray-200">
+        <View className="flex flex-row items-center justify-between">
+          <Text className="block text-gray-400 text-sm">
+            正确: {correctCount} / {currentIndex}
+          </Text>
+          <Text className="block text-gray-300 text-sm">
+            {vocabularyType === 'review' ? '复习词库' : '新单词词库'}
+          </Text>
+        </View>
+      </View>
+    </View>
+  )
+}
