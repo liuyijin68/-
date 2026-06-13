@@ -1,370 +1,185 @@
 ============================================
-单词听写小程序修复日志
+单词听写小程序 - 修复日志（第二版）
 ============================================
 
 一、修复目标
 ============================================
 
-用户报告了5个核心Bug，要求逐一修复并通过模拟测试验证：
+问题1：上传图片后点"识别单词"仍然提示"未识别到单词"
+问题2：手动录入单词后，点"开始听写"，提示"词库数据解析失败"
 
-1. **Bug 1 - 图片识别无单词**：上传图片后点"识别单词"仍提示"请先上传照片"，无法识别出单词或短语
-
-2. **Bug 2 - 朗读无声**：听写时，朗读没有声音出来
-
-3. **Bug 3 - 录音未识别**：录音后语音识别无法正常工作
-
-4. **Bug 4 - 中文含义判断误判**：答案判断逻辑不合理，正确答案被判定错误
-
-5. **Bug 5 - 手写识别缺失**：缺少Canvas手写板输入英文功能
-
-额外要求：
-- 识别出单词后提供美式+英式发音各一次
-- 朗读后等待用户输入英文拼写，拼写正确后再提示说出中文含义
-- 用户说对任意一个正确含义即判定正确，自动继续下一个单词
+根因分析：
+1. **存储格式不一致**：词库管理页面用 `Taro.setStorageSync` 直接存数组，而其他页面用 `JSON.stringify` 存字符串，读取时又用 `JSON.parse`，导致解析报错。
+2. **图片识别后单词列表为空**：LLM 调用失败、返回内容解析不匹配、或环境变量缺失。需要增强鲁棒性和错误提示。
 
 
 ============================================
-二、修复内容详情
+二、修复内容
 ============================================
 
-### Bug 1: 修复图片识别无单词
+### 修复1：统一存储格式（解决"词库数据解析失败"）
 
-**问题分析**：
-- `Network.request` 返回 `{ statusCode, data }`，其中 `data` 是后端响应体
-- 后端响应体结构为 `{ code: 200, msg: "success", data: { words: [...], count } }`
-- 原代码直接用 `res?.data?.words` 取值，漏掉了中间层 `data`
+**涉及文件**：
+- `src/pages/vocabulary/index.tsx`
+- `src/pages/dictation/index.tsx`
 
 **修复方案**：
-```ts
-// 修复前（错误）
-const words = res?.data?.words  // undefined
+添加统一存储格式辅助函数，兼容字符串和数组两种格式
 
-// 修复后（正确）
-const responseData = res?.data
-const wordsData = responseData?.data?.words || responseData?.words
-```
-
-**修复位置**：
-- `src/pages/upload/index.tsx` 第97行（handleRecognize函数）
-
-**测试样本**：
-样例图片应识别出：put up, important, notice, locker, drawer, at the back (of), corner, bookcase, screen, at school, different from（共11个单词/短语）
-
----
-
-### Bug 2: 修复朗读无声
-
-**问题分析**：
-- 原代码使用 Web `new Audio()` API，小程序不支持
-- TTS SDK 配额不足时无法生成音频
-
-**修复方案**：
-1. 改用 `Taro.createInnerAudioContext()` 播放音频（微信小程序原生API）
-2. 后端添加 Google TTS 回退方案（免费、无需认证）
-
-```ts
-// 修复后：使用 Taro 音频 API
-function playAudioUrl(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const audioCtx = Taro.createInnerAudioContext()
-    audioCtx.src = url
-    audioCtx.autoplay = true
-    audioCtx.onEnded(() => {
-      audioCtx.destroy()
-      resolve()
-    })
-    audioCtx.onError((err) => {
-      audioCtx.destroy()
-      reject(err)
-    })
-  })
-}
-```
-
-**后端回退方案**：
-```ts
-// Google Translate TTS URL（免费）
-const googleTtsUrl = (text: string, lang: string) =>
-  `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`
-
-// 美式发音：lang = 'en'
-// 英式发音：lang = 'en-GB'
-```
-
-**修复位置**：
-- `src/pages/dictation/index.tsx` 第25-48行（playAudioUrl函数）
-- `server/src/dictation/dictation.controller.ts` 第198-274行（speakWordBoth方法）
-
----
-
-### Bug 3: 修复录音未识别
-
-**问题分析**：
-- 原代码将录音数据直接发送给 ASR，但 ASR SDK 需要音频 URL
-- 录音使用 Web Speech API，小程序不支持
-
-**修复方案**：
-1. 使用 `Taro.getRecorderManager()` 录音（微信小程序原生API）
-2. 录音 → 上传到对象存储 → 获取 URL → 调用 ASR SDK
-
-```ts
-// Fix Bug 3: 录音 → 上传到存储 → ASR识别
-const startRecording = useCallback(() => {
-  const recorderManager = Taro.getRecorderManager()
-  recorderManager.onStop((res) => {
-    if (res.tempFilePath) {
-      handleVoiceResult(res.tempFilePath)
-    }
-  })
-  recorderManager.start({
-    format: 'wav',
-    sampleRate: 16000,
-    numberOfChannels: 1,
-  })
-}, [])
-
-// 录音后处理
-const handleVoiceResult = async (tempFilePath: string) => {
-  // Step 1: 上传录音文件到对象存储
-  const uploadRes = await Network.uploadFile({
-    url: '/api/dictation/upload-audio',
-    filePath: tempFilePath,
-    name: 'audio',
-  })
-  
-  // Step 2: 调用 ASR 识别
-  const res = await Network.request({
-    url: '/api/dictation/recognize-speech',
-    method: 'POST',
-    data: { audioUrl },
-  })
-}
-```
-
-**修复位置**：
-- `src/pages/dictation/index.tsx` 第154-241行
-- `server/src/dictation/dictation.controller.ts` 第276-310行（upload-audio端点）
-- `server/src/dictation/dictation.controller.ts` 第354-382行（recognize-speech端点）
-
----
-
-### Bug 4: 修复中文含义判断误判
-
-**问题分析**：
-- 原比对逻辑缺少 `trim()`、`toLowerCase()`、标点符号去除
-- 用户输入带空格或标点的答案被判定错误
-
-**修复方案**：
-```ts
-// Fix Bug 4: trim whitespace, normalize, remove punctuation
-const normalizedAnswer = userAnswer.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '')
-const normalizedMeanings = correctMeanings.map(m =>
-  m.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, ''),
-)
-
-// 多含义匹配：任意一个正确即判定正确
-const isCorrect = normalizedMeanings.some(meaning => {
-  // 精确匹配
-  if (normalizedAnswer === meaning) return true
-  // 包含匹配（用户可能只说了部分含义）
-  if (meaning.includes(normalizedAnswer) && normalizedAnswer.length >= 1) return true
-  if (normalizedAnswer.includes(meaning) && meaning.length >= 1) return true
-  return false
-})
-```
-
-**修复位置**：
-- `src/pages/dictation/index.tsx` 第145-151行（checkMeaning函数）
-- `server/src/dictation/dictation.controller.ts` 第385-418行（check-answer端点）
-
----
-
-### Bug 5: 新增手写识别
-
-**问题分析**：
-- 原代码缺少 Canvas 手写板输入英文功能
-
-**修复方案**：
-1. 使用 Taro Canvas 2D API 创建手写板
-2. 导出 Canvas 图片 → 上传 → LLM 多模态识别手写英文
-
-```ts
-// Fix Bug 5: Canvas手写板 — 使用 Taro Canvas 2D API
-const initCanvas = useCallback(() => {
-  const query = Taro.createSelectorQuery()
-  query.select('#handwritingCanvas').fields({ node: true, size: true }).exec((res) => {
-    if (res && res[0] && res[0].node) {
-      const canvas = res[0].node
-      const ctx = canvas.getContext('2d')
-      const dpr = Taro.getSystemInfoSync().pixelRatio
-      canvas.width = res[0].width * dpr
-      canvas.height = res[0].height * dpr
-      ctx.scale(dpr, dpr)
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      ctx.lineWidth = 3
-      ctx.strokeStyle = '#333'
-      ctxRef.current = ctx
-    }
-  })
-}, [showCanvas])
-
-// 手写识别提交
-const handleHandwritingSubmit = async () => {
-  // 导出Canvas为图片
-  const res = await Taro.canvasToTempFilePath({
-    canvasId: 'handwritingCanvas',
-    fileType: 'png',
-  })
-  // 上传并识别
-  const recognizeRes = await Network.request({
-    url: '/api/dictation/recognize-handwriting',
-    method: 'POST',
-    data: { imageUrl },
-  })
-}
-```
-
-**后端新增端点**：
-```ts
-@Post('recognize-handwriting')
-async recognizeHandwriting(@Body() body: { imageUrl: string }) {
-  const llmResponse = await this.llmClient.invoke([
-    {
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: imageUrl } },
-        { type: 'text', text: 'Recognize handwritten English text...' },
-      ],
-    },
-  ], { model: 'doubao-seed-2-0-lite-260215' })
-  
-  return { code: 200, msg: 'success', data: { text: llmResponse.content.trim() } }
-}
-```
-
-**修复位置**：
-- `src/pages/dictation/index.tsx` 第347-470行
-- `server/src/dictation/dictation.controller.ts` 第312-352行
-
-
-============================================
-三、SDK API 修复记录
-============================================
-
-### LLM SDK API 修复
-
-**问题**：`LLMClient.invoke()` 签名错误，`LLMResponse` 类型错误
-
-**修复**：
-```ts
-// 修复前（错误）
-const response = await this.llmClient.invoke({
-  model: 'doubao-seed-2-0-lite-260215',
-  messages: [...]
-})
-const content = response?.choices?.[0]?.message?.content
-
-// 修复后（正确）
-const response = await this.llmClient.invoke(
-  [{ role: 'user', content: [...] }],  // messages 数组
-  { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 }  // llmConfig
-)
-const content = response?.content  // LLMResponse 只有 { content: string }
-```
-
----
-
-### S3Storage API 修复
-
-**问题**：对象存储 API 使用方式错误
-
-**修复**：
-```ts
-// 修复前（错误）
-const fileKey = await this.storage.upload({ buffer, filename, mimetype })
-const url = await this.storage.getPublicUrl(fileKey)
-
-// 修复后（正确）
-const fileKey = await this.storage.uploadFile({
-  fileContent: content,
-  fileName,
-  contentType: file.mimetype,
-})
-const url = await this.storage.generatePresignedUrl({
-  key: fileKey,
-  expireTime: 86400,
-})
-```
-
----
-
-### TTS SDK API 修复
-
-**问题**：TTS SDK 配额不足时无回退方案
-
-**修复**：添加 Google Translate TTS 免费回退
-```ts
-const googleTtsUrl = (text: string, lang: string) =>
-  `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`
-``
-
-
-============================================
-四、前端组件修复记录
-============================================
-
-### Input 组件修复
-
-**问题**：使用原生 `<input>` 标签，小程序不支持
-
-**修复**：改用 `@/components/ui/input`
 ```tsx
-// 修复前（错误）
-<input value={spellingInput} onInput={...} />
+// 读取辅助函数
+const loadFromStorage = (key: string): WordItem[] => {
+  const raw = Taro.getStorageSync(key);
+  if (!raw) return [];
+  try {
+    // 如果是字符串则 parse，否则直接当作数组（兼容旧数据）
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return [];
+  }
+};
 
-// 修复后（正确）
-import { Input } from '@/components/ui/input'
-<Input value={spellingInput} onInput={(e) => setSpellingInput(e.detail.value)} />
-``
+// 写入辅助函数
+const saveToStorage = (key: string, data: WordItem[]) => {
+  Taro.setStorageSync(key, JSON.stringify(data));
+};
+```
 
----
+**修复位置**：
+- vocabulary/index.tsx 第17-30行：添加 loadFromStorage 和 saveToStorage
+- vocabulary/index.tsx 第46-49行：loadVocabularies 使用 loadFromStorage
+- vocabulary/index.tsx 第53-61行：setCurrentWords 使用 saveToStorage
+- dictation/index.tsx 第24-33行：添加 loadWordsFromStorage
+- dictation/index.tsx 第98-109行：useEffect 中使用 loadWordsFromStorage + 空词库友好提示
+- dictation/index.tsx 第317-330行：addToReview / removeFromReview 使用 loadWordsFromStorage
 
-### 图标修复
 
-**问题**：使用了 lucide-react-taro 中不存在的图标（Loader2, HelpCircle）
+### 修复2：增强图片识别鲁棒性+详细日志
 
-**修复**：
-- `Loader2` → `Loader`
-- 删除 `HelpCircle`
+**涉及文件**：
+- `server/src/dictation/dictation.controller.ts`
 
----
+**修复方案**：
+1. 更简洁的 LLM prompt
+2. 多层 fallback 解析逻辑（JSON → 按行拆分 → 按字符匹配）
+3. 返回原始 LLM 内容供前端调试
+4. 详细 console.log 输出
 
-### 存储 Key 统一
+**修复位置**：
+- dictation.controller.ts 第75-154行：重写 recognizeAllWords 方法
 
-**问题**：不同页面使用不同的存储 key
 
-**修复**：统一使用 `new_vocabulary` 和 `review_vocabulary`
-```ts
-// 修复后（统一）
-Taro.getStorageSync('new_vocabulary')
-Taro.getStorageSync('review_vocabulary')
-Taro.setStorageSync('new_vocabulary', JSON.stringify(words))
-Taro.setStorageSync('review_vocabulary', JSON.stringify(words))
+### 修复3：前端增加错误详情显示
+
+**涉及文件**：
+- `src/pages/upload/index.tsx`
+
+**修复方案**：
+1. 检查后端返回 code，非 200 时显示后端错误消息
+2. 未识别到单词时，如果有 raw 字段，显示 LLM 返回内容帮助调试
+3. 更明确的网络错误提示
+
+**修复位置**：
+- upload/index.tsx 第78-120行：重写 handleRecognize 函数
+
+
+### 修复4：空词库友好提示
+
+**涉及文件**：
+- `src/pages/dictation/index.tsx`
+
+**修复方案**：
+词库为空时不要直接报"词库数据解析失败"，改为"词库为空，请先添加单词"，并自动返回上一页
+
+**修复位置**：
+- dictation/index.tsx 第105-109行：添加空词库友好提示
+
+
+============================================
+三、修复前后对比
+============================================
+
+### 修复前（错误代码）
+
+**vocabulary/index.tsx - 错误的存储读取**：
+```tsx
+const loadVocabularies = () => {
+  const storedNewWords = Taro.getStorageSync('new_vocabulary') || [];
+  // 问题：如果存储的是 JSON 字符串，|| [] 不会触发，导致后续解析错误
+  setNewWords(storedNewWords);
+};
+```
+
+**dictation/index.tsx - 错误的存储写入**：
+```tsx
+const addToReview = (word: WordItem) => {
+  try {
+    const stored = Taro.getStorageSync('review_vocabulary')
+    const reviewList: WordItem[] = stored ? JSON.parse(stored) : []
+    // 问题：如果 vocabulary 页面存的是数组，JSON.parse 会报错
+    // ...
+  } catch {
+    // ignore - 隐藏了错误
+  }
+}
+```
+
+### 修复后（正确代码）
+
+**vocabulary/index.tsx - 统一读取**：
+```tsx
+const loadVocabularies = () => {
+  setNewWords(loadFromStorage('new_vocabulary'));
+  setReviewWords(loadFromStorage('review_vocabulary'));
+};
+```
+
+**dictation/index.tsx - 统一写入**：
+```tsx
+const addToReview = (word: WordItem) => {
+  const reviewList = loadWordsFromStorage('review_vocabulary')
+  // 兼容两种格式，不会报错
+  if (!reviewList.some((w) => w.word === word.word)) {
+    reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
+    Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
+  }
+}
 ```
 
 
 ============================================
-五、编译错误修复记录
+四、验证步骤
 ============================================
 
-1. **TypeScript 类型错误**：修复 `LLMResponse` 类型使用
-2. **ESLint 错误**：删除未使用的 import（useRef, Image 等）
-3. **图标不存在**：Loader2 → Loader，删除 HelpCircle
-4. **JSX 格式**：双引号改为单引号
-5. **any 类型**：添加明确的类型定义
+1. **清空小程序本地存储**（开发工具中清除 Storage）
+2. **重新编译后端和前端**：
+   - `pnpm validate` ✅ 通过
+   - `pnpm build:web` ✅ 通过
+   - `pnpm build:server` ✅ 通过
+3. **测试手动添加单词**：
+   - 进入词库管理 → 手动添加单词（如 `hello` 含义 `你好`）
+   - 点击开始听写 → 应正常进入听写流程 ✅
+4. **测试图片识别**：
+   - 上传样例图片，查看控制台后端日志和前端错误信息
+   - 如果仍失败，将后端打印的 `LLM raw content` 发给我进一步调整
 
-最终结果：`pnpm validate` 通过，`pnpm build:web` 成功，`pnpm build:server` 成功
+
+============================================
+五、环境配置提醒
+============================================
+
+如果图片识别仍然失败，请检查以下环境变量是否配置正确：
+```
+COZE_BUCKET_ENDPOINT_URL=你的S3兼容存储地址
+COZE_BUCKET_NAME=存储桶名称
+# 以及 LLM 所需的 API key（通过 Config 自动读取）
+```
+
+若无有效的 LLM 服务，可临时在后端 `recognizeAllWords` 中硬编码返回固定单词列表用于验证功能：
+```typescript
+// 临时测试代码
+const mockWords = ['put up', 'important', 'notice', 'locker', 'drawer', 'at the back (of)', 'corner', 'bookcase', 'screen', 'at school', 'different from'];
+```
 
 
 ============================================

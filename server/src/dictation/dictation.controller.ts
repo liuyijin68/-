@@ -73,84 +73,72 @@ export class DictationController {
   }
 
   // ========== Recognize All Words from Image ==========
-  // Fix: LLMClient.invoke(messages, llmConfig) — two args; LLMResponse = { content: string }
+  // Fix: 增强鲁棒性+详细日志
   @Post('recognize-all-words')
   @HttpCode(200)
   async recognizeAllWords(@Body() body: { imageUrl: string }) {
     const { imageUrl } = body;
     console.log('[recognize-all-words] imageUrl:', imageUrl);
-
     try {
-      // Fix: invoke(messages, llmConfig) — correct signature
       const llmResponse = await this.llmClient.invoke(
         [
           {
             role: 'user',
             content: [
-              {
-                type: 'image_url',
-                image_url: { url: imageUrl },
-              },
+              { type: 'image_url', image_url: { url: imageUrl } },
               {
                 type: 'text',
-                text: `This is a photo of English vocabulary words. Each line contains a word/phrase, possibly followed by phonetic symbols (after a "/" symbol), then part of speech and Chinese meanings.
-
-Please extract ALL English words and phrases from this image. Return ONLY a JSON array of strings, like this format:
-["word1", "word2", "phrase with spaces", "word3"]
-
-Rules:
-- Extract only the English word or phrase from each line
-- If a line has a "/" symbol, the text before "/" is the word/phrase
-- Include multi-word phrases like "put up", "at the back (of)" as complete strings
-- Do NOT include phonetic symbols, parts of speech, or Chinese meanings
-- Return ONLY the JSON array, no other text`,
+                text: `Extract all English words/phrases from this image. Each line contains a word/phrase, possibly followed by phonetic symbols (after "/") and Chinese meanings. Return ONLY a JSON array of strings, like: ["word1", "word2", "phrase with spaces"]. Do not include any extra text.`,
               },
             ],
           },
         ],
-        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
+        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.2 }
       );
-
-      // Fix: LLMResponse has only { content: string }
-      const content: string = llmResponse?.content || '';
-      console.log('[recognize-all-words] LLM content:', content.substring(0, 500));
-
-      // Try to extract JSON array from the response
+      let content = llmResponse?.content || '';
+      console.log('[recognize-all-words] LLM raw content:', content);
       let words: string[] = [];
+      // 1. 尝试提取 JSON 数组
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         try {
           words = JSON.parse(jsonMatch[0]);
-        } catch {
-          // Fallback: split by comma and clean
-          words = jsonMatch[0]
-            .replace(/[\[\]"]/g, '')
-            .split(',')
-            .map((w: string) => w.trim())
-            .filter((w: string) => w.length > 0);
+        } catch (e) {
+          console.warn('JSON parse failed, try fallback', e);
         }
       }
-
-      console.log('[recognize-all-words] extracted words:', words);
-
-      if (words.length === 0) {
-        return { code: 200, msg: 'success', data: { words: [], count: 0 } };
+      // 2. 如果失败，按行拆分（每行第一个单词/短语）
+      if (!words.length) {
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          // 取第一个单词（空格、斜杠、中文字符之前的部分）
+          let match = trimmed.match(/^[a-zA-Z\s\(\)]+/);
+          if (match) {
+            let w = match[0].trim();
+            if (w) words.push(w);
+          } else if (trimmed.match(/^[a-zA-Z]/)) {
+            // 简单取到空格或标点
+            let end = trimmed.search(/[^a-zA-Z\s\(\)]/);
+            if (end === -1) words.push(trimmed);
+            else words.push(trimmed.substring(0, end).trim());
+          }
+        }
+        console.log('[recognize-all-words] fallback words:', words);
       }
-
-      // Translate each word to get Chinese meanings
+      // 去重、过滤空
+      words = [...new Set(words.filter(w => w.length > 0))];
+      if (words.length === 0) {
+        return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
+      }
+      // 翻译每个单词
       const wordsWithMeanings: WordEntry[] = [];
       for (const word of words) {
         const meanings = await this.translateWord(word);
-        wordsWithMeanings.push({
-          word,
-          meanings,
-          date: new Date().toISOString().split('T')[0],
-        });
+        wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
       }
-
-      // Overwrite new word bank
       newWordBank = wordsWithMeanings;
-
       return {
         code: 200,
         msg: 'success',
@@ -160,8 +148,8 @@ Rules:
         },
       };
     } catch (error: any) {
-      console.error('[recognize-all-words] error:', error?.message || error);
-      return { code: 500, msg: '识别失败: ' + (error?.message || '未知错误'), data: null };
+      console.error('[recognize-all-words] error:', error);
+      return { code: 500, msg: '识别失败: ' + (error?.message || ''), data: null };
     }
   }
 

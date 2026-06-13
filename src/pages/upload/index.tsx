@@ -75,7 +75,7 @@ export default function UploadPage() {
     }
   }
 
-  // Fix Bug 1: 正确解析识别结果
+  // Fix Bug 1: 正确解析识别结果 + 增强错误提示
   const handleRecognize = async () => {
     if (!imageUrl) {
       setErrorMsg('请先上传照片')
@@ -90,29 +90,30 @@ export default function UploadPage() {
         data: { imageUrl }
       })
       console.log('Recognize response:', res)
-
-      // Network.request 返回 { statusCode, data: 后端响应体 }
-      // 后端响应体: { code, msg, data: { words: [...], count } }
       const responseData = res?.data
+      // 如果后端返回 500 错误
+      if (responseData?.code !== 200) {
+        setErrorMsg(responseData?.msg || '识别失败，请重试')
+        return
+      }
       const wordsData = responseData?.data?.words || responseData?.words
-
       if (wordsData && Array.isArray(wordsData) && wordsData.length > 0) {
-        // 将识别结果转换为 WordItem 格式
         const wordItems: WordItem[] = wordsData.map((w: { word: string; meanings?: string[] }) => ({
           word: w.word,
           meanings: w.meanings || [],
           date: new Date().toISOString().split('T')[0]
         }))
         setWords(wordItems)
-        // Fix Bug 1: 存入新单词词库（覆盖替换）
         Taro.setStorageSync('new_vocabulary', JSON.stringify(wordItems))
         Taro.showToast({ title: `识别到 ${wordItems.length} 个单词`, icon: 'success' })
       } else {
-        setErrorMsg('未识别到单词，请确认图片清晰且包含英文单词')
+        // 如果有原始返回，显示给用户帮助调试
+        const raw = responseData?.data?.raw
+        setErrorMsg('未识别到单词，请确认图片清晰且包含英文单词' + (raw ? `（LLM返回：${raw.substring(0, 100)}）` : ''))
       }
     } catch (err) {
       console.error('识别失败:', err)
-      setErrorMsg('识别失败，请重试')
+      setErrorMsg('网络请求失败，请检查后端服务')
     } finally {
       setIsRecognizing(false)
     }

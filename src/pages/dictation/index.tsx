@@ -21,6 +21,17 @@ interface AudioResult {
   ukAudioUrl: string
 }
 
+// Fix: 统一存储格式辅助函数
+const loadWordsFromStorage = (key: string): WordItem[] => {
+  const raw = Taro.getStorageSync(key)
+  if (!raw) return []
+  try {
+    return typeof raw === 'string' ? JSON.parse(raw) : raw
+  } catch {
+    return []
+  }
+}
+
 // Fix Bug 2: 使用 Taro.createInnerAudioContext 播放音频
 function playAudioUrl(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -84,20 +95,16 @@ export default function DictationPage() {
         Taro.showToast({ title: '单词数据解析失败', icon: 'none' })
       }
     } else {
-      // 从本地存储加载
+      // Fix: 从本地存储加载，使用 loadWordsFromStorage 兼容格式
       const key = params?.type === 'review' ? 'review_vocabulary' : 'new_vocabulary'
-      const stored = Taro.getStorageSync(key)
-      if (stored) {
-        try {
-          const words = JSON.parse(stored) as WordItem[]
-          setWordList(words)
-          setTotalCount(words.length)
-          setPhase('playing')
-        } catch {
-          Taro.showToast({ title: '词库数据解析失败', icon: 'none' })
-        }
+      const words = loadWordsFromStorage(key)
+      if (words.length > 0) {
+        setWordList(words)
+        setTotalCount(words.length)
+        setPhase('playing')
       } else {
-        Taro.showToast({ title: '词库为空', icon: 'none' })
+        Taro.showToast({ title: '词库为空，请先添加单词', icon: 'none' })
+        setTimeout(() => Taro.navigateBack(), 1500)
       }
     }
   }, [])
@@ -308,30 +315,18 @@ export default function DictationPage() {
 
   // Fix Bug 3: 加入复习词库
   const addToReview = (word: WordItem) => {
-    try {
-      const stored = Taro.getStorageSync('review_vocabulary')
-      const reviewList: WordItem[] = stored ? JSON.parse(stored) : []
-      if (!reviewList.some((w) => w.word === word.word)) {
-        reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
-        Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
-      }
-    } catch {
-      // ignore
+    const reviewList = loadWordsFromStorage('review_vocabulary')
+    if (!reviewList.some((w) => w.word === word.word)) {
+      reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
+      Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
     }
   }
 
   // Fix Bug 3: 从复习词库删除
   const removeFromReview = (word: WordItem) => {
-    try {
-      const stored = Taro.getStorageSync('review_vocabulary')
-      if (stored) {
-        const reviewList: WordItem[] = JSON.parse(stored)
-        const updated = reviewList.filter((w) => w.word !== word.word)
-        Taro.setStorageSync('review_vocabulary', JSON.stringify(updated))
-      }
-    } catch {
-      // ignore
-    }
+    const reviewList = loadWordsFromStorage('review_vocabulary')
+    const updated = reviewList.filter((w) => w.word !== word.word)
+    Taro.setStorageSync('review_vocabulary', JSON.stringify(updated))
   }
 
   const goToNext = () => {

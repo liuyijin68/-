@@ -14,6 +14,21 @@ interface WordItem {
   date: string;
 }
 
+// Fix: 统一存储格式辅助函数
+const loadFromStorage = (key: string): WordItem[] => {
+  const raw = Taro.getStorageSync(key);
+  if (!raw) return [];
+  try {
+    // 如果是字符串则 parse，否则直接当作数组（兼容旧数据）
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return [];
+  }
+};
+const saveToStorage = (key: string, data: WordItem[]) => {
+  Taro.setStorageSync(key, JSON.stringify(data));
+};
+
 const VocabularyPage = () => {
   const [newWords, setNewWords] = useState<WordItem[]>([]);
   const [reviewWords, setReviewWords] = useState<WordItem[]>([]);
@@ -27,24 +42,22 @@ const VocabularyPage = () => {
     loadVocabularies();
   });
 
-  // Fix: 统一存储 key 命名
+  // Fix: 使用统一的 loadFromStorage
   const loadVocabularies = () => {
-    const storedNewWords = Taro.getStorageSync('new_vocabulary') || [];
-    const storedReviewWords = Taro.getStorageSync('review_vocabulary') || [];
-    setNewWords(storedNewWords);
-    setReviewWords(storedReviewWords);
+    setNewWords(loadFromStorage('new_vocabulary'));
+    setReviewWords(loadFromStorage('review_vocabulary'));
   };
 
-  // Fix: 统一存储 key
+  // Fix: 统一存储格式
   const getCurrentWords = () => activeTab === 'new' ? newWords : reviewWords;
   const setCurrentWords = (words: WordItem[]) => {
+    const key = activeTab === 'new' ? 'new_vocabulary' : 'review_vocabulary';
     if (activeTab === 'new') {
       setNewWords(words);
-      Taro.setStorageSync('new_vocabulary', words);
     } else {
       setReviewWords(words);
-      Taro.setStorageSync('review_vocabulary', words);
     }
+    saveToStorage(key, words);
   };
 
   // 删除单词
