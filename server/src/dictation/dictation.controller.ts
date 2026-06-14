@@ -113,16 +113,19 @@ export class DictationController {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          // 取第一个单词（空格、斜杠、中文字符之前的部分）
-          let match = trimmed.match(/^[a-zA-Z\s\(\)]+/);
-          if (match) {
-            let w = match[0].trim();
-            if (w) words.push(w);
-          } else if (trimmed.match(/^[a-zA-Z]/)) {
-            // 简单取到空格或标点
-            let end = trimmed.search(/[^a-zA-Z\s\(\)]/);
-            if (end === -1) words.push(trimmed);
-            else words.push(trimmed.substring(0, end).trim());
+          // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
+          // 先找到第一个 / 或中文字符的位置
+          const slashIdx = trimmed.indexOf('/');
+          const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
+          let endIdx = trimmed.length;
+          if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+          if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+          // 提取英文部分
+          let englishPart = trimmed.substring(0, endIdx).trim();
+          // 只保留字母、空格、括号
+          englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
+          if (englishPart && englishPart.length > 0) {
+            words.push(englishPart);
           }
         }
         console.log('[recognize-all-words] fallback words:', words);

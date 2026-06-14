@@ -1,16 +1,13 @@
 ============================================
-单词听写小程序 - 完整程序代码（第二版）
+单词听写小程序 - 完整程序（第三版）
 ============================================
-修复内容：
-1. 统一存储格式（解决"词库数据解析失败"）
-2. 增强图片识别鲁棒性+详细日志
-3. 前端增加错误详情显示
-4. 空词库友好提示
+修复内容：图片识别规则优化、Canvas手写导出修复
 
 ============================================
-一、后端 NestJS Controller
+一、后端代码
 ============================================
-文件路径：server/src/dictation/dictation.controller.ts
+
+文件：server/src/dictation/dictation.controller.ts
 
 ```typescript
 import { Controller, Post, Body, UploadedFile, UseInterceptors, HttpCode } from '@nestjs/common';
@@ -53,7 +50,7 @@ export class DictationController {
   @HttpCode(200)
   @UseInterceptors(FileInterceptor('image'))
   async uploadImage(@UploadedFile() file: Express.Multer.File) {
-    console.log('[upload-image] file received:', file?.originalname, 'size:', file?.buffer?.length);
+    console.log('[upload-image] file received:', file?.originalname);
 
     let content: Buffer;
     if (file.path) {
@@ -79,13 +76,11 @@ export class DictationController {
       expireTime: 86400,
     });
 
-    console.log('[upload-image] uploaded key:', fileKey);
-    console.log('[upload-image] imageUrl:', imageUrl);
     return { code: 200, msg: 'success', data: { imageUrl, fileKey } };
   }
 
   // ========== Recognize All Words from Image ==========
-  // Fix: 增强鲁棒性+详细日志
+  // Fix 第三版: 只提取每行开头的英文部分，遇到 / 或中文就停止
   @Post('recognize-all-words')
   @HttpCode(200)
   async recognizeAllWords(@Body() body: { imageUrl: string }) {
@@ -100,7 +95,7 @@ export class DictationController {
               { type: 'image_url', image_url: { url: imageUrl } },
               {
                 type: 'text',
-                text: `Extract all English words/phrases from this image. Each line contains a word/phrase, possibly followed by phonetic symbols (after "/") and Chinese meanings. Return ONLY a JSON array of strings, like: ["word1", "word2", "phrase with spaces"]. Do not include any extra text.`,
+                text: `Extract all English words/phrases from this image. Each line contains a word/phrase, possibly followed by phonetic symbols (after "/") and Chinese meanings. Return ONLY a JSON array of strings.`,
               },
             ],
           },
@@ -110,6 +105,7 @@ export class DictationController {
       let content = llmResponse?.content || '';
       console.log('[recognize-all-words] LLM raw content:', content);
       let words: string[] = [];
+      
       // 1. 尝试提取 JSON 数组
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
@@ -119,32 +115,35 @@ export class DictationController {
           console.warn('JSON parse failed, try fallback', e);
         }
       }
-      // 2. 如果失败，按行拆分（每行第一个单词/短语）
+      
+      // 2. Fix 第三版: 按行拆分，只提取英文部分
       if (!words.length) {
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          // 取第一个单词（空格、斜杠、中文字符之前的部分）
-          let match = trimmed.match(/^[a-zA-Z\s\(\)]+/);
-          if (match) {
-            let w = match[0].trim();
-            if (w) words.push(w);
-          } else if (trimmed.match(/^[a-zA-Z]/)) {
-            // 简单取到空格或标点
-            let end = trimmed.search(/[^a-zA-Z\s\(\)]/);
-            if (end === -1) words.push(trimmed);
-            else words.push(trimmed.substring(0, end).trim());
+          // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
+          const slashIdx = trimmed.indexOf('/');
+          const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
+          let endIdx = trimmed.length;
+          if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+          if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+          // 提取英文部分
+          let englishPart = trimmed.substring(0, endIdx).trim();
+          // 只保留字母、空格、括号
+          englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
+          if (englishPart && englishPart.length > 0) {
+            words.push(englishPart);
           }
         }
         console.log('[recognize-all-words] fallback words:', words);
       }
-      // 去重、过滤空
+      
       words = [...new Set(words.filter(w => w.length > 0))];
       if (words.length === 0) {
         return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
       }
-      // 翻译每个单词
+      
       const wordsWithMeanings: WordEntry[] = [];
       for (const word of words) {
         const meanings = await this.translateWord(word);
@@ -169,177 +168,206 @@ export class DictationController {
   private async translateWord(word: string): Promise<string[]> {
     try {
       const response = await this.llmClient.invoke(
-        [
-          {
-            role: 'user',
-            content: `Translate the English word/phrase "${word}" into Chinese. List ALL possible meanings (different parts of speech, different contexts). Return ONLY a JSON array of Chinese strings, like: ["含义1", "含义2", "含义3"]. No other text.`,
-          },
-        ],
+        [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings. Return ONLY a JSON array.` }],
         { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
       );
-
       const content: string = response?.content || '';
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        try {
-          return JSON.parse(jsonMatch[0]);
-        } catch {
-          return [word];
-        }
+        try { return JSON.parse(jsonMatch[0]); } catch { return [word]; }
       }
       return [word];
+    } catch { return [word]; }
+  }
+
+  // ========== Speak Word - Both US and UK ==========
+  @Post('speak-word-both')
+  @HttpCode(200)
+  async speakWordBoth(@Body() body: { word: string }) {
+    const { word } = body;
+    const googleTtsUrl = (text: string, lang: string) =>
+      `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
+    try {
+      const usResponse = await this.ttsClient.synthesize({
+        uid: 'dictation-user', text: word, speaker: 'zh_female_vv_uranus_bigtts',
+        audioFormat: 'mp3', sampleRate: 24000,
+      });
+      return { code: 200, msg: 'success', data: { usAudioUrl: usResponse.audioUri, ukAudioUrl: usResponse.audioUri } };
     } catch {
-      return [word];
+      return { code: 200, msg: 'success (Google TTS fallback)', data: { usAudioUrl: googleTtsUrl(word, 'en'), ukAudioUrl: googleTtsUrl(word, 'en-GB') } };
     }
   }
 
-  // 其他端点（upload-audio, recognize-speech, speak-word-both, check-answer, recognize-handwriting）
-  // ... 保持原有实现，详见完整文件 ...
+  // ========== Upload Audio for ASR ==========
+  @Post('upload-audio')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('audio'))
+  async uploadAudio(@UploadedFile() file: Express.Multer.File) {
+    let content: Buffer;
+    if (file.path) {
+      const fs = await import('fs');
+      content = fs.readFileSync(file.path);
+    } else if (file.buffer) {
+      content = file.buffer;
+    } else {
+      return { code: 400, msg: '无法获取音频文件', data: null };
+    }
+    const fileName = `dictation/audio/${Date.now()}_${file.originalname || 'recording.wav'}`;
+    const fileKey = await this.storage.uploadFile({ fileContent: content, fileName, contentType: 'audio/wav' });
+    const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
+    return { code: 200, msg: 'success', data: { audioUrl } };
+  }
+
+  // ========== Handwriting Recognition ==========
+  @Post('recognize-handwriting')
+  @HttpCode(200)
+  async recognizeHandwriting(@Body() body: { imageUrl: string }) {
+    try {
+      const llmResponse = await this.llmClient.invoke(
+        [{ role: 'user', content: [
+          { type: 'image_url', image_url: { url: body.imageUrl } },
+          { type: 'text', text: 'Recognize handwritten English. Return ONLY the text.' }
+        ] }],
+        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.1 }
+      );
+      const text = (llmResponse?.content || '').trim();
+      return { code: 200, msg: 'success', data: { text } };
+    } catch (error: any) {
+      return { code: 500, msg: '手写识别失败: ' + (error?.message || ''), data: null };
+    }
+  }
+
+  // ========== ASR - Speech Recognition ==========
+  @Post('recognize-speech')
+  @HttpCode(200)
+  async recognizeSpeech(@Body() body: { audioUrl: string }) {
+    try {
+      const result = await this.asrClient.recognize({ uid: 'dictation-user', url: body.audioUrl });
+      return { code: 200, msg: 'success', data: { text: result.text } };
+    } catch (error: any) {
+      return { code: 500, msg: '语音识别失败', data: null };
+    }
+  }
+
+  // ========== Check Answer ==========
+  @Post('check-answer')
+  @HttpCode(200)
+  async checkAnswer(@Body() body: { word: string; correctMeanings: string[]; userAnswer: string }) {
+    const normalizedAnswer = body.userAnswer.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '');
+    const normalizedMeanings = body.correctMeanings.map(m => m.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, ''));
+    const isCorrect = normalizedMeanings.some(m => normalizedAnswer === m || m.includes(normalizedAnswer) || normalizedAnswer.includes(m));
+    return { code: 200, msg: 'success', data: { isCorrect } };
+  }
 }
 ```
 
 ============================================
-二、前端页面 - 词库管理 (vocabulary/index.tsx)
+二、前端代码
 ============================================
-文件路径：src/pages/vocabulary/index.tsx
 
-关键修复：统一存储格式辅助函数
+### 1. 听写页面 (dictation/index.tsx)
+
+关键修复部分：
 
 ```tsx
-// Fix: 统一存储格式辅助函数
-const loadFromStorage = (key: string): WordItem[] => {
-  const raw = Taro.getStorageSync(key);
-  if (!raw) return [];
-  try {
-    // 如果是字符串则 parse，否则直接当作数组（兼容旧数据）
-    return typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch {
-    return [];
-  }
-};
-const saveToStorage = (key: string, data: WordItem[]) => {
-  Taro.setStorageSync(key, JSON.stringify(data));
-};
+// Fix 第三版: 存储canvas node用于导出图片
+const canvasRef = useRef<any>(null)
 
-// Fix: 使用统一的 loadFromStorage
-const loadVocabularies = () => {
-  setNewWords(loadFromStorage('new_vocabulary'));
-  setReviewWords(loadFromStorage('review_vocabulary'));
-};
+// initCanvas中存储canvas node
+canvasRef.current = canvas // Fix: 存储canvas node
 
-// Fix: 统一存储格式
-const setCurrentWords = (words: WordItem[]) => {
-  const key = activeTab === 'new' ? 'new_vocabulary' : 'review_vocabulary';
-  if (activeTab === 'new') {
-    setNewWords(words);
-  } else {
-    setReviewWords(words);
+// clearCanvas使用存储的canvas node
+const clearCanvas = () => {
+  if (canvasRef.current) {
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
   }
-  saveToStorage(key, words);
-};
+}
+
+// handleHandwritingSubmit使用canvas node导出
+const handleHandwritingSubmit = async () => {
+  if (!canvasRef.current) {
+    Taro.showToast({ title: 'Canvas未初始化', icon: 'none' })
+    return
+  }
+  const res = await Taro.canvasToTempFilePath({
+    canvas: canvasRef.current,  // Fix: 使用canvas node，不是canvasId
+    fileType: 'png',
+  })
+  // ... 上传并识别
+}
 ```
 
-============================================
-三、前端页面 - 听写流程 (dictation/index.tsx)
-============================================
-文件路径：src/pages/dictation/index.tsx
+### 2. 词库管理页面 (vocabulary/index.tsx)
 
-关键修复：统一存储格式 + 空词库友好提示
+关键修复部分：
 
 ```tsx
-// Fix: 统一存储格式辅助函数
-const loadWordsFromStorage = (key: string): WordItem[] => {
+// Fix 第二版: 统一存储格式辅助函数
+const loadFromStorage = (key: string): WordItem[] => {
   const raw = Taro.getStorageSync(key)
   if (!raw) return []
   try {
     return typeof raw === 'string' ? JSON.parse(raw) : raw
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-// Fix: 从本地存储加载，使用 loadWordsFromStorage 兼容格式
-const key = params?.type === 'review' ? 'review_vocabulary' : 'new_vocabulary'
-const words = loadWordsFromStorage(key)
-if (words.length > 0) {
-  setWordList(words)
-  setTotalCount(words.length)
-  setPhase('playing')
-} else {
-  Taro.showToast({ title: '词库为空，请先添加单词', icon: 'none' })
-  setTimeout(() => Taro.navigateBack(), 1500)
+const saveToStorage = (key: string, data: WordItem[]) => {
+  Taro.setStorageSync(key, JSON.stringify(data))
 }
 
-// Fix: 加入复习词库
-const addToReview = (word: WordItem) => {
-  const reviewList = loadWordsFromStorage('review_vocabulary')
-  if (!reviewList.some((w) => w.word === word.word)) {
-    reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
-    Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
-  }
-}
-
-// Fix: 从复习词库删除
-const removeFromReview = (word: WordItem) => {
-  const reviewList = loadWordsFromStorage('review_vocabulary')
-  const updated = reviewList.filter((w) => w.word !== word.word)
-  Taro.setStorageSync('review_vocabulary', JSON.stringify(updated))
+const loadVocabularies = () => {
+  setNewWords(loadFromStorage('new_vocabulary'))
+  setReviewWords(loadFromStorage('review_vocabulary'))
 }
 ```
 
-============================================
-四、前端页面 - 上传识别 (upload/index.tsx)
-============================================
-文件路径：src/pages/upload/index.tsx
+### 3. 上传页面 (upload/index.tsx)
 
-关键修复：前端增加错误详情显示
+关键修复部分：
 
 ```tsx
-// Fix Bug 1: 正确解析识别结果 + 增强错误提示
 const handleRecognize = async () => {
-  if (!imageUrl) {
-    setErrorMsg('请先上传照片')
+  const res = await Network.request({
+    url: '/api/dictation/recognize-all-words',
+    method: 'POST',
+    data: { imageUrl }
+  })
+  const responseData = res?.data
+  if (responseData?.code !== 200) {
+    setErrorMsg(responseData?.msg || '识别失败')
     return
   }
-  setIsRecognizing(true)
-  setErrorMsg('')
-  try {
-    const res = await Network.request({
-      url: '/api/dictation/recognize-all-words',
-      method: 'POST',
-      data: { imageUrl }
-    })
-    console.log('Recognize response:', res)
-    const responseData = res?.data
-    // 如果后端返回 500 错误
-    if (responseData?.code !== 200) {
-      setErrorMsg(responseData?.msg || '识别失败，请重试')
-      return
-    }
-    const wordsData = responseData?.data?.words || responseData?.words
-    if (wordsData && Array.isArray(wordsData) && wordsData.length > 0) {
-      const wordItems: WordItem[] = wordsData.map((w: { word: string; meanings?: string[] }) => ({
-        word: w.word,
-        meanings: w.meanings || [],
-        date: new Date().toISOString().split('T')[0]
-      }))
-      setWords(wordItems)
-      Taro.setStorageSync('new_vocabulary', JSON.stringify(wordItems))
-      Taro.showToast({ title: `识别到 ${wordItems.length} 个单词`, icon: 'success' })
-    } else {
-      // 如果有原始返回，显示给用户帮助调试
-      const raw = responseData?.data?.raw
-      setErrorMsg('未识别到单词，请确认图片清晰且包含英文单词' + (raw ? `（LLM返回：${raw.substring(0, 100)}）` : ''))
-    }
-  } catch (err) {
-    console.error('识别失败:', err)
-    setErrorMsg('网络请求失败，请检查后端服务')
-  } finally {
-    setIsRecognizing(false)
+  const wordsData = responseData?.data?.words || responseData?.words
+  if (wordsData && wordsData.length > 0) {
+    // 存储识别结果
+    Taro.setStorageSync('new_vocabulary', JSON.stringify(wordsData))
+  } else {
+    const raw = responseData?.data?.raw
+    setErrorMsg('未识别到单词' + (raw ? `（LLM返回：${raw.substring(0, 100)}）` : ''))
   }
 }
 ```
 
 ============================================
-程序代码结束
+三、配置文件
+============================================
+
+### app.config.ts
+
+```typescript
+export default defineAppConfig({
+  pages: [
+    'pages/index/index',
+    'pages/upload/index',
+    'pages/dictation/index',
+    'pages/vocabulary/index'
+  ],
+  window: { backgroundTextStyle: 'light',navigationBarBackgroundColor: '#fff',navigationBarTitleText: '单词听写',navigationBarTextStyle: 'black' }
+})
+```
+
+============================================
+程序结束
 ============================================

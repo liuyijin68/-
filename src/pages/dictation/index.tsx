@@ -75,6 +75,7 @@ export default function DictationPage() {
   const [showCanvas, setShowCanvas] = useState(false)
   const isDrawingRef = useRef(false)
   const ctxRef = useRef<any>(null)
+  const canvasRef = useRef<any>(null) // Fix: 存储canvas node用于导出图片
 
   const currentWord = wordList[currentIndex]
 
@@ -357,6 +358,7 @@ export default function DictationPage() {
           ctx.lineWidth = 3
           ctx.strokeStyle = '#333'
           ctxRef.current = ctx
+          canvasRef.current = canvas // Fix: 存储canvas node
         }
       })
     }, 200)
@@ -394,21 +396,17 @@ export default function DictationPage() {
   }
 
   const clearCanvas = () => {
-    if (ctxRef.current) {
-      const query = Taro.createSelectorQuery()
-      query.select('#handwritingCanvas').fields({ node: true, size: true }).exec((res) => {
-        if (res && res[0] && res[0].node) {
-          const canvas = res[0].node
-          const ctx = canvas.getContext('2d')
-          const dpr = Taro.getSystemInfoSync().pixelRatio
-          ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
-          ctx.lineCap = 'round'
-          ctx.lineJoin = 'round'
-          ctx.lineWidth = 3
-          ctx.strokeStyle = '#333'
-          ctxRef.current = ctx
-        }
-      })
+    if (canvasRef.current) {
+      // Fix: 使用存储的 canvas node
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      const dpr = Taro.getSystemInfoSync().pixelRatio
+      ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = 3
+      ctx.strokeStyle = '#333'
+      ctxRef.current = ctx
     }
   }
 
@@ -416,9 +414,14 @@ export default function DictationPage() {
   const handleHandwritingSubmit = async () => {
     try {
       Taro.showLoading({ title: '识别中...' })
-      // 导出Canvas为图片
+      // Fix: 使用 canvas node 导出图片（Canvas 2D API）
+      if (!canvasRef.current) {
+        Taro.hideLoading()
+        Taro.showToast({ title: 'Canvas未初始化', icon: 'none' })
+        return
+      }
       const res = await Taro.canvasToTempFilePath({
-        canvasId: 'handwritingCanvas',
+        canvas: canvasRef.current,
         fileType: 'png',
       })
       if (res.tempFilePath) {

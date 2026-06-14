@@ -1,149 +1,157 @@
 ============================================
-单词听写小程序 - 修复日志（第二版）
+单词听写小程序 - 修复日志（第三版）
 ============================================
 
 一、修复目标
 ============================================
 
-问题1：上传图片后点"识别单词"仍然提示"未识别到单词"
-问题2：手动录入单词后，点"开始听写"，提示"词库数据解析失败"
+问题1：识别完成后，每一行的所有内容被认为是单词或短语，第二行如果不是英文也会被识别为单词
+       正确逻辑：只识别每行的英文部分，遇到 / 或中文就停止
 
-根因分析：
-1. **存储格式不一致**：词库管理页面用 `Taro.setStorageSync` 直接存数组，而其他页面用 `JSON.stringify` 存字符串，读取时又用 `JSON.parse`，导致解析报错。
-2. **图片识别后单词列表为空**：LLM 调用失败、返回内容解析不匹配、或环境变量缺失。需要增强鲁棒性和错误提示。
+问题2：手写英文内容显示无法识别
+
+样例图片期望结果：put up, important, notice, locker, drawer, at the back (of), corner, bookcase, screen, at school, different from
 
 
 ============================================
 二、修复内容
 ============================================
 
-### 修复1：统一存储格式（解决"词库数据解析失败"）
+### 修复1：图片识别规则 - 只提取英文部分
 
-**涉及文件**：
-- `src/pages/vocabulary/index.tsx`
-- `src/pages/dictation/index.tsx`
+**问题根因**：
+原正则 `/^[a-zA-Z\s\(\)]+/` 会匹配所有英文字符，但不会在 `/` 或中文处停止
 
 **修复方案**：
-添加统一存储格式辅助函数，兼容字符串和数组两种格式
+1. 先找到 `/` 和中文字符的位置
+2. 只取前面的部分作为英文单词/短语
+3. 再去除非字母、空格、括号的字符
 
-```tsx
-// 读取辅助函数
-const loadFromStorage = (key: string): WordItem[] => {
-  const raw = Taro.getStorageSync(key);
-  if (!raw) return [];
-  try {
-    // 如果是字符串则 parse，否则直接当作数组（兼容旧数据）
-    return typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch {
-    return [];
+**修复代码**（`server/src/dictation/dictation.controller.ts` 第110-132行）：
+```typescript
+// 2. 如果失败，按行拆分（每行第一个单词/短语）
+if (!words.length) {
+  const lines = content.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
+    // 先找到第一个 / 或中文字符的位置
+    const slashIdx = trimmed.indexOf('/');
+    const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
+    let endIdx = trimmed.length;
+    if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+    if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+    // 提取英文部分
+    let englishPart = trimmed.substring(0, endIdx).trim();
+    // 只保留字母、空格、括号
+    englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
+    if (englishPart && englishPart.length > 0) {
+      words.push(englishPart);
+    }
   }
-};
-
-// 写入辅助函数
-const saveToStorage = (key: string, data: WordItem[]) => {
-  Taro.setStorageSync(key, JSON.stringify(data));
-};
+  console.log('[recognize-all-words] fallback words:', words);
+}
 ```
 
-**修复位置**：
-- vocabulary/index.tsx 第17-30行：添加 loadFromStorage 和 saveToStorage
-- vocabulary/index.tsx 第46-49行：loadVocabularies 使用 loadFromStorage
-- vocabulary/index.tsx 第53-61行：setCurrentWords 使用 saveToStorage
-- dictation/index.tsx 第24-33行：添加 loadWordsFromStorage
-- dictation/index.tsx 第98-109行：useEffect 中使用 loadWordsFromStorage + 空词库友好提示
-- dictation/index.tsx 第317-330行：addToReview / removeFromReview 使用 loadWordsFromStorage
+**模拟测试**：
+输入行："important /ɪmˈpɔːtənt/ adj. 重要的"
+- slashIdx = 10 (第一个 `/` 的位置)
+- englishPart = "important " (substring(0, 10))
+- 最终结果 = "important" ✅
+
+输入行："at the back (of) 在...后面"
+- chineseIdx = 17 (第一个中文字符位置)
+- englishPart = "at the back (of)"
+- 最终结果 = "at the back (of)" ✅
 
 
-### 修复2：增强图片识别鲁棒性+详细日志
+### 修复2：手写识别 - Canvas 2D 导出图片
 
-**涉及文件**：
-- `server/src/dictation/dictation.controller.ts`
-
-**修复方案**：
-1. 更简洁的 LLM prompt
-2. 多层 fallback 解析逻辑（JSON → 按行拆分 → 按字符匹配）
-3. 返回原始 LLM 内容供前端调试
-4. 详细 console.log 输出
-
-**修复位置**：
-- dictation.controller.ts 第75-154行：重写 recognizeAllWords 方法
-
-
-### 修复3：前端增加错误详情显示
-
-**涉及文件**：
-- `src/pages/upload/index.tsx`
+**问题根因**：
+Canvas 使用 `type="2d"` (Canvas 2D API)，但导出图片用 `canvasId` 是旧 API，导致无法正确导出
 
 **修复方案**：
-1. 检查后端返回 code，非 200 时显示后端错误消息
-2. 未识别到单词时，如果有 raw 字段，显示 LLM 返回内容帮助调试
-3. 更明确的网络错误提示
+1. 存储 canvas node 到 `canvasRef`
+2. 使用 `Taro.canvasToTempFilePath({ canvas: canvasRef.current })` 导出
 
-**修复位置**：
-- upload/index.tsx 第78-120行：重写 handleRecognize 函数
+**修复代码**（`src/pages/dictation/index.tsx`）：
 
+第78行 - 存储canvas node：
+```tsx
+const canvasRef = useRef<any>(null) // Fix: 存储canvas node用于导出图片
+```
 
-### 修复4：空词库友好提示
+第360行 - initCanvas中存储：
+```tsx
+canvasRef.current = canvas // Fix: 存储canvas node
+```
 
-**涉及文件**：
-- `src/pages/dictation/index.tsx`
+第416-428行 - 导出使用canvas node：
+```tsx
+// Fix: 使用 canvas node 导出图片（Canvas 2D API）
+if (!canvasRef.current) {
+  Taro.hideLoading()
+  Taro.showToast({ title: 'Canvas未初始化', icon: 'none' })
+  return
+}
+const res = await Taro.canvasToTempFilePath({
+  canvas: canvasRef.current,  // 使用 canvas node，不是 canvasId
+  fileType: 'png',
+})
+```
 
-**修复方案**：
-词库为空时不要直接报"词库数据解析失败"，改为"词库为空，请先添加单词"，并自动返回上一页
-
-**修复位置**：
-- dictation/index.tsx 第105-109行：添加空词库友好提示
+第396-408行 - clearCanvas使用canvasRef：
+```tsx
+const clearCanvas = () => {
+  if (canvasRef.current) {
+    // Fix: 使用存储的 canvas node
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    const dpr = Taro.getSystemInfoSync().pixelRatio
+    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+    // ...
+  }
+}
+```
 
 
 ============================================
 三、修复前后对比
 ============================================
 
-### 修复前（错误代码）
+### 图片识别规则对比
 
-**vocabulary/index.tsx - 错误的存储读取**：
-```tsx
-const loadVocabularies = () => {
-  const storedNewWords = Taro.getStorageSync('new_vocabulary') || [];
-  // 问题：如果存储的是 JSON 字符串，|| [] 不会触发，导致后续解析错误
-  setNewWords(storedNewWords);
-};
+**修复前（错误）**：
+```typescript
+let match = trimmed.match(/^[a-zA-Z\s\(\)]+/);
+// 问题：会匹配 "important /ɪmˈpɔːtənt/" 整个部分
+// 因为 / 和音标符号不在匹配范围内，但后面的字母会继续匹配
 ```
 
-**dictation/index.tsx - 错误的存储写入**：
-```tsx
-const addToReview = (word: WordItem) => {
-  try {
-    const stored = Taro.getStorageSync('review_vocabulary')
-    const reviewList: WordItem[] = stored ? JSON.parse(stored) : []
-    // 问题：如果 vocabulary 页面存的是数组，JSON.parse 会报错
-    // ...
-  } catch {
-    // ignore - 隐藏了错误
-  }
-}
+**修复后（正确）**：
+```typescript
+const slashIdx = trimmed.indexOf('/');
+const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
+// 明确找到分隔符位置，只取前面的英文部分
+let englishPart = trimmed.substring(0, Math.min(slashIdx, chineseIdx)).trim();
 ```
 
-### 修复后（正确代码）
 
-**vocabulary/index.tsx - 统一读取**：
+### Canvas导出对比
+
+**修复前（错误）**：
 ```tsx
-const loadVocabularies = () => {
-  setNewWords(loadFromStorage('new_vocabulary'));
-  setReviewWords(loadFromStorage('review_vocabulary'));
-};
+const res = await Taro.canvasToTempFilePath({
+  canvasId: 'handwritingCanvas',  // 旧API，Canvas 2D不支持
+})
 ```
 
-**dictation/index.tsx - 统一写入**：
+**修复后（正确）**：
 ```tsx
-const addToReview = (word: WordItem) => {
-  const reviewList = loadWordsFromStorage('review_vocabulary')
-  // 兼容两种格式，不会报错
-  if (!reviewList.some((w) => w.word === word.word)) {
-    reviewList.push({ ...word, date: new Date().toISOString().split('T')[0] })
-    Taro.setStorageSync('review_vocabulary', JSON.stringify(reviewList))
-  }
-}
+const res = await Taro.canvasToTempFilePath({
+  canvas: canvasRef.current,  // Canvas 2D API，传递canvas node
+})
 ```
 
 
@@ -153,33 +161,26 @@ const addToReview = (word: WordItem) => {
 
 1. **清空小程序本地存储**（开发工具中清除 Storage）
 2. **重新编译后端和前端**：
-   - `pnpm validate` ✅ 通过
-   - `pnpm build:web` ✅ 通过
-   - `pnpm build:server` ✅ 通过
-3. **测试手动添加单词**：
-   - 进入词库管理 → 手动添加单词（如 `hello` 含义 `你好`）
-   - 点击开始听写 → 应正常进入听写流程 ✅
-4. **测试图片识别**：
-   - 上传样例图片，查看控制台后端日志和前端错误信息
-   - 如果仍失败，将后端打印的 `LLM raw content` 发给我进一步调整
+   - `pnpm validate` ✅ ESLint + TypeScript 通过
+   - `pnpm build:web` ✅ 编译成功
+   - `pnpm build:server` ✅ 编译成功
+3. **测试图片识别**：
+   - 上传样例图片 → 识别结果应为11个单词
+   - 每行只提取英文部分，不包含音标和中文
+4. **测试手写识别**：
+   - 进入听写 → 点击手写按钮 → 在Canvas上书写英文
+   - 点击确认 → 应正确识别并填入输入框
 
 
 ============================================
-五、环境配置提醒
+五、第二版修复保留内容
 ============================================
 
-如果图片识别仍然失败，请检查以下环境变量是否配置正确：
-```
-COZE_BUCKET_ENDPOINT_URL=你的S3兼容存储地址
-COZE_BUCKET_NAME=存储桶名称
-# 以及 LLM 所需的 API key（通过 Config 自动读取）
-```
+以下第二版修复内容仍然保留：
 
-若无有效的 LLM 服务，可临时在后端 `recognizeAllWords` 中硬编码返回固定单词列表用于验证功能：
-```typescript
-// 临时测试代码
-const mockWords = ['put up', 'important', 'notice', 'locker', 'drawer', 'at the back (of)', 'corner', 'bookcase', 'screen', 'at school', 'different from'];
-```
+1. **存储格式统一**：`loadFromStorage` / `saveToStorage` 兼容字符串和数组
+2. **空词库友好提示**：词库为空时提示"词库为空，请先添加单词"
+3. **前端错误详情显示**：显示后端返回的错误消息和raw content
 
 
 ============================================
