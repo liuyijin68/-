@@ -1,187 +1,114 @@
 ============================================
-单词听写小程序 - 修复日志（第三版）
+单词听写小程序 - 修复日志（第四版）
 ============================================
 
-一、修复目标
-============================================
+## 本次修复目标
 
-问题1：识别完成后，每一行的所有内容被认为是单词或短语，第二行如果不是英文也会被识别为单词
-       正确逻辑：只识别每行的英文部分，遇到 / 或中文就停止
+1. **图片识别把整行当单词**：LLM 返回 JSON 数组时，每个字符串包含音标、词性、中文等脏数据
+2. 确保无论 LLM 返回什么格式，都只提取纯英文单词/短语
 
-问题2：手写英文内容显示无法识别
+---
 
-样例图片期望结果：put up, important, notice, locker, drawer, at the back (of), corner, bookcase, screen, at school, different from
+## 根因分析
 
+第三版代码的清洗逻辑只在"LLM 返回非 JSON 时（fallback）"才执行。
+当 LLM 正常返回 JSON 数组时，直接使用了数组中的原始字符串（可能包含音标、中文等）。
 
-============================================
-二、修复内容
-============================================
+例如 LLM 返回：
+```json
+["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]
+```
 
-### 修复1：图片识别规则 - 只提取英文部分
+第三版代码直接用这两个字符串作为单词，导致显示错误。
 
-**问题根因**：
-原正则 `/^[a-zA-Z\s\(\)]+/` 会匹配所有英文字符，但不会在 `/` 或中文处停止
+---
 
-**修复方案**：
-1. 先找到 `/` 和中文字符的位置
-2. 只取前面的部分作为英文单词/短语
-3. 再去除非字母、空格、括号的字符
+## 修复内容
 
-**修复代码**（`server/src/dictation/dictation.controller.ts` 第110-132行）：
+### 1. 添加统一清洗函数
+
+文件：`server/src/dictation/dictation.controller.ts`（第36-49行）
+
 ```typescript
-// 2. 如果失败，按行拆分（每行第一个单词/短语）
-if (!words.length) {
-  const lines = content.split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
-    // 先找到第一个 / 或中文字符的位置
-    const slashIdx = trimmed.indexOf('/');
-    const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
-    let endIdx = trimmed.length;
-    if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
-    if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
-    // 提取英文部分
-    let englishPart = trimmed.substring(0, endIdx).trim();
-    // 只保留字母、空格、括号
-    englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
-    if (englishPart && englishPart.length > 0) {
-      words.push(englishPart);
+// Fix 第四版: 统一清洗函数 — 只取英文部分
+private cleanWord(raw: string): string {
+  // 1. 找到第一个 / 或中文字符的位置
+  const slashIdx = raw.indexOf('/');
+  const chineseIdx = raw.search(/[\u4e00-\u9fa5]/);
+  let endIdx = raw.length;
+  if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+  if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+  
+  // 2. 截取并清理多余字符（保留字母、空格、括号、连字符）
+  let cleaned = raw.substring(0, endIdx).trim();
+  cleaned = cleaned.replace(/[^a-zA-Z\s\(\)\-]/g, '').trim();
+  return cleaned;
+}
+```
+
+### 2. 修改 recognizeAllWords 方法
+
+文件：`server/src/dictation/dictation.controller.ts`（第91-173行）
+
+关键改动：无论 JSON 还是 fallback，都调用 cleanWord
+
+```typescript
+// 3. Fix 第四版: 统一清洗 — 每个候选词都提取英文部分
+const words = rawWords
+  .map(w => this.cleanWord(w))
+  .filter(w => w.length > 0);
+
+// 4. 去重
+const uniqueWords = [...new Set(words)];
+```
+
+### 3. 修改 translateWord 方法
+
+文件：`server/src/dictation/dictation.controller.ts`（第176-196行）
+
+```typescript
+// Fix 第四版: 防止空含义导致异常
+private async translateWord(word: string): Promise<string[]> {
+  try {
+    const response = await this.llmClient.invoke(
+      [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings as JSON array. If no translation, return ["${word}"]` }],
+      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
+    );
+    const content: string = response?.content || '';
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      try {
+        const arr = JSON.parse(jsonMatch[0]);
+        return Array.isArray(arr) && arr.length ? arr : [word];
+      } catch { return [word]; }
     }
-  }
-  console.log('[recognize-all-words] fallback words:', words);
+    return [word];
+  } catch { return [word]; }
 }
 ```
 
-**模拟测试**：
-输入行："important /ɪmˈpɔːtənt/ adj. 重要的"
-- slashIdx = 10 (第一个 `/` 的位置)
-- englishPart = "important " (substring(0, 10))
-- 最终结果 = "important" ✅
+---
 
-输入行："at the back (of) 在...后面"
-- chineseIdx = 17 (第一个中文字符位置)
-- englishPart = "at the back (of)"
-- 最终结果 = "at the back (of)" ✅
+## 修复效果验证
 
+**测试输入**：LLM 返回 `["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]`
 
-### 修复2：手写识别 - Canvas 2D 导出图片
+**cleanWord 处理**：
+- `"important /ɪmˈpɔːtnt/ adj. 重要的"` → 找到 `/` 位置 → 截取 `"important "` → 清理后 `"important"`
+- `"notice /ˈnəʊtɪs/ n. 通知"` → 找到 `/` 位置 → 截取 `"notice "` → 清理后 `"notice"`
 
-**问题根因**：
-Canvas 使用 `type="2d"` (Canvas 2D API)，但导出图片用 `canvasId` 是旧 API，导致无法正确导出
+**最终单词列表**：`["important", "notice"]` ✅
 
-**修复方案**：
-1. 存储 canvas node 到 `canvasRef`
-2. 使用 `Taro.canvasToTempFilePath({ canvas: canvasRef.current })` 导出
+---
 
-**修复代码**（`src/pages/dictation/index.tsx`）：
+## 版本历史
 
-第78行 - 存储canvas node：
-```tsx
-const canvasRef = useRef<any>(null) // Fix: 存储canvas node用于导出图片
-```
-
-第360行 - initCanvas中存储：
-```tsx
-canvasRef.current = canvas // Fix: 存储canvas node
-```
-
-第416-428行 - 导出使用canvas node：
-```tsx
-// Fix: 使用 canvas node 导出图片（Canvas 2D API）
-if (!canvasRef.current) {
-  Taro.hideLoading()
-  Taro.showToast({ title: 'Canvas未初始化', icon: 'none' })
-  return
-}
-const res = await Taro.canvasToTempFilePath({
-  canvas: canvasRef.current,  // 使用 canvas node，不是 canvasId
-  fileType: 'png',
-})
-```
-
-第396-408行 - clearCanvas使用canvasRef：
-```tsx
-const clearCanvas = () => {
-  if (canvasRef.current) {
-    // Fix: 使用存储的 canvas node
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    const dpr = Taro.getSystemInfoSync().pixelRatio
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
-    // ...
-  }
-}
-```
-
-
-============================================
-三、修复前后对比
-============================================
-
-### 图片识别规则对比
-
-**修复前（错误）**：
-```typescript
-let match = trimmed.match(/^[a-zA-Z\s\(\)]+/);
-// 问题：会匹配 "important /ɪmˈpɔːtənt/" 整个部分
-// 因为 / 和音标符号不在匹配范围内，但后面的字母会继续匹配
-```
-
-**修复后（正确）**：
-```typescript
-const slashIdx = trimmed.indexOf('/');
-const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
-// 明确找到分隔符位置，只取前面的英文部分
-let englishPart = trimmed.substring(0, Math.min(slashIdx, chineseIdx)).trim();
-```
-
-
-### Canvas导出对比
-
-**修复前（错误）**：
-```tsx
-const res = await Taro.canvasToTempFilePath({
-  canvasId: 'handwritingCanvas',  // 旧API，Canvas 2D不支持
-})
-```
-
-**修复后（正确）**：
-```tsx
-const res = await Taro.canvasToTempFilePath({
-  canvas: canvasRef.current,  // Canvas 2D API，传递canvas node
-})
-```
-
-
-============================================
-四、验证步骤
-============================================
-
-1. **清空小程序本地存储**（开发工具中清除 Storage）
-2. **重新编译后端和前端**：
-   - `pnpm validate` ✅ ESLint + TypeScript 通过
-   - `pnpm build:web` ✅ 编译成功
-   - `pnpm build:server` ✅ 编译成功
-3. **测试图片识别**：
-   - 上传样例图片 → 识别结果应为11个单词
-   - 每行只提取英文部分，不包含音标和中文
-4. **测试手写识别**：
-   - 进入听写 → 点击手写按钮 → 在Canvas上书写英文
-   - 点击确认 → 应正确识别并填入输入框
-
-
-============================================
-五、第二版修复保留内容
-============================================
-
-以下第二版修复内容仍然保留：
-
-1. **存储格式统一**：`loadFromStorage` / `saveToStorage` 兼容字符串和数组
-2. **空词库友好提示**：词库为空时提示"词库为空，请先添加单词"
-3. **前端错误详情显示**：显示后端返回的错误消息和raw content
-
+| 版本 | 修复内容 |
+|------|----------|
+| 第一版 | 数据解析路径、TTS音频播放、录音ASR识别、中文含义比对、Canvas手写板 |
+| 第二版 | 存储格式统一、图片识别鲁棒性增强 |
+| 第三版 | 图片识别fallback清洗逻辑、Canvas 2D导出修复 |
+| 第四版 | 统一清洗函数，无论JSON还是fallback都调用cleanWord |
 
 ============================================
 修复日志结束

@@ -1,372 +1,160 @@
 ============================================
-单词听写小程序 - 完整程序（第三版）
+单词听写小程序 - 完整程序（第四版）
 ============================================
-修复内容：图片识别规则优化、Canvas手写导出修复
+修复内容：统一清洗函数，无论JSON还是fallback都只提取纯英文
 
 ============================================
-一、后端代码
+一、后端核心修复代码
 ============================================
 
 文件：server/src/dictation/dictation.controller.ts
 
+### 1. 统一清洗函数（新增）
+
 ```typescript
-import { Controller, Post, Body, UploadedFile, UseInterceptors, HttpCode } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { S3Storage, LLMClient, TTSClient, ASRClient, Config } from 'coze-coding-dev-sdk';
-
-interface WordEntry {
-  word: string;
-  meanings: string[];
-  date: string;
-}
-
-// In-memory word banks (server-side, resets on restart)
-let newWordBank: WordEntry[] = [];
-let reviewWordBank: WordEntry[] = [];
-
-@Controller('dictation')
-export class DictationController {
-  private storage: S3Storage;
-  private llmClient: LLMClient;
-  private ttsClient: TTSClient;
-  private asrClient: ASRClient;
-
-  constructor() {
-    const config = new Config();
-    this.storage = new S3Storage({
-      endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
-      accessKey: '',
-      secretKey: '',
-      bucketName: process.env.COZE_BUCKET_NAME,
-      region: 'cn-beijing',
-    });
-    this.llmClient = new LLMClient(config);
-    this.ttsClient = new TTSClient(config);
-    this.asrClient = new ASRClient(config);
-  }
-
-  // ========== Image Upload ==========
-  @Post('upload-image')
-  @HttpCode(200)
-  @UseInterceptors(FileInterceptor('image'))
-  async uploadImage(@UploadedFile() file: Express.Multer.File) {
-    console.log('[upload-image] file received:', file?.originalname);
-
-    let content: Buffer;
-    if (file.path) {
-      const fs = await import('fs');
-      content = fs.readFileSync(file.path);
-    } else if (file.buffer) {
-      content = file.buffer;
-    } else {
-      return { code: 400, msg: '无法获取文件内容', data: null };
-    }
-
-    const timestamp = Date.now();
-    const fileName = `dictation/${timestamp}_${file.originalname || 'photo.jpg'}`;
-
-    const fileKey = await this.storage.uploadFile({
-      fileContent: content,
-      fileName,
-      contentType: file.mimetype || 'image/jpeg',
-    });
-
-    const imageUrl = await this.storage.generatePresignedUrl({
-      key: fileKey,
-      expireTime: 86400,
-    });
-
-    return { code: 200, msg: 'success', data: { imageUrl, fileKey } };
-  }
-
-  // ========== Recognize All Words from Image ==========
-  // Fix 第三版: 只提取每行开头的英文部分，遇到 / 或中文就停止
-  @Post('recognize-all-words')
-  @HttpCode(200)
-  async recognizeAllWords(@Body() body: { imageUrl: string }) {
-    const { imageUrl } = body;
-    console.log('[recognize-all-words] imageUrl:', imageUrl);
-    try {
-      const llmResponse = await this.llmClient.invoke(
-        [
-          {
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: imageUrl } },
-              {
-                type: 'text',
-                text: `Extract all English words/phrases from this image. Each line contains a word/phrase, possibly followed by phonetic symbols (after "/") and Chinese meanings. Return ONLY a JSON array of strings.`,
-              },
-            ],
-          },
-        ],
-        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.2 }
-      );
-      let content = llmResponse?.content || '';
-      console.log('[recognize-all-words] LLM raw content:', content);
-      let words: string[] = [];
-      
-      // 1. 尝试提取 JSON 数组
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        try {
-          words = JSON.parse(jsonMatch[0]);
-        } catch (e) {
-          console.warn('JSON parse failed, try fallback', e);
-        }
-      }
-      
-      // 2. Fix 第三版: 按行拆分，只提取英文部分
-      if (!words.length) {
-        const lines = content.split(/\r?\n/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
-          const slashIdx = trimmed.indexOf('/');
-          const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
-          let endIdx = trimmed.length;
-          if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
-          if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
-          // 提取英文部分
-          let englishPart = trimmed.substring(0, endIdx).trim();
-          // 只保留字母、空格、括号
-          englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
-          if (englishPart && englishPart.length > 0) {
-            words.push(englishPart);
-          }
-        }
-        console.log('[recognize-all-words] fallback words:', words);
-      }
-      
-      words = [...new Set(words.filter(w => w.length > 0))];
-      if (words.length === 0) {
-        return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
-      }
-      
-      const wordsWithMeanings: WordEntry[] = [];
-      for (const word of words) {
-        const meanings = await this.translateWord(word);
-        wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
-      }
-      newWordBank = wordsWithMeanings;
-      return {
-        code: 200,
-        msg: 'success',
-        data: {
-          words: wordsWithMeanings.map(w => ({ word: w.word, meanings: w.meanings })),
-          count: wordsWithMeanings.length,
-        },
-      };
-    } catch (error: any) {
-      console.error('[recognize-all-words] error:', error);
-      return { code: 500, msg: '识别失败: ' + (error?.message || ''), data: null };
-    }
-  }
-
-  // ========== Translate Word ==========
-  private async translateWord(word: string): Promise<string[]> {
-    try {
-      const response = await this.llmClient.invoke(
-        [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings. Return ONLY a JSON array.` }],
-        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
-      );
-      const content: string = response?.content || '';
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        try { return JSON.parse(jsonMatch[0]); } catch { return [word]; }
-      }
-      return [word];
-    } catch { return [word]; }
-  }
-
-  // ========== Speak Word - Both US and UK ==========
-  @Post('speak-word-both')
-  @HttpCode(200)
-  async speakWordBoth(@Body() body: { word: string }) {
-    const { word } = body;
-    const googleTtsUrl = (text: string, lang: string) =>
-      `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
-    try {
-      const usResponse = await this.ttsClient.synthesize({
-        uid: 'dictation-user', text: word, speaker: 'zh_female_vv_uranus_bigtts',
-        audioFormat: 'mp3', sampleRate: 24000,
-      });
-      return { code: 200, msg: 'success', data: { usAudioUrl: usResponse.audioUri, ukAudioUrl: usResponse.audioUri } };
-    } catch {
-      return { code: 200, msg: 'success (Google TTS fallback)', data: { usAudioUrl: googleTtsUrl(word, 'en'), ukAudioUrl: googleTtsUrl(word, 'en-GB') } };
-    }
-  }
-
-  // ========== Upload Audio for ASR ==========
-  @Post('upload-audio')
-  @HttpCode(200)
-  @UseInterceptors(FileInterceptor('audio'))
-  async uploadAudio(@UploadedFile() file: Express.Multer.File) {
-    let content: Buffer;
-    if (file.path) {
-      const fs = await import('fs');
-      content = fs.readFileSync(file.path);
-    } else if (file.buffer) {
-      content = file.buffer;
-    } else {
-      return { code: 400, msg: '无法获取音频文件', data: null };
-    }
-    const fileName = `dictation/audio/${Date.now()}_${file.originalname || 'recording.wav'}`;
-    const fileKey = await this.storage.uploadFile({ fileContent: content, fileName, contentType: 'audio/wav' });
-    const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
-    return { code: 200, msg: 'success', data: { audioUrl } };
-  }
-
-  // ========== Handwriting Recognition ==========
-  @Post('recognize-handwriting')
-  @HttpCode(200)
-  async recognizeHandwriting(@Body() body: { imageUrl: string }) {
-    try {
-      const llmResponse = await this.llmClient.invoke(
-        [{ role: 'user', content: [
-          { type: 'image_url', image_url: { url: body.imageUrl } },
-          { type: 'text', text: 'Recognize handwritten English. Return ONLY the text.' }
-        ] }],
-        { model: 'doubao-seed-2-0-lite-260215', temperature: 0.1 }
-      );
-      const text = (llmResponse?.content || '').trim();
-      return { code: 200, msg: 'success', data: { text } };
-    } catch (error: any) {
-      return { code: 500, msg: '手写识别失败: ' + (error?.message || ''), data: null };
-    }
-  }
-
-  // ========== ASR - Speech Recognition ==========
-  @Post('recognize-speech')
-  @HttpCode(200)
-  async recognizeSpeech(@Body() body: { audioUrl: string }) {
-    try {
-      const result = await this.asrClient.recognize({ uid: 'dictation-user', url: body.audioUrl });
-      return { code: 200, msg: 'success', data: { text: result.text } };
-    } catch (error: any) {
-      return { code: 500, msg: '语音识别失败', data: null };
-    }
-  }
-
-  // ========== Check Answer ==========
-  @Post('check-answer')
-  @HttpCode(200)
-  async checkAnswer(@Body() body: { word: string; correctMeanings: string[]; userAnswer: string }) {
-    const normalizedAnswer = body.userAnswer.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '');
-    const normalizedMeanings = body.correctMeanings.map(m => m.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, ''));
-    const isCorrect = normalizedMeanings.some(m => normalizedAnswer === m || m.includes(normalizedAnswer) || normalizedAnswer.includes(m));
-    return { code: 200, msg: 'success', data: { isCorrect } };
-  }
+// Fix 第四版: 统一清洗函数 — 只取英文部分
+private cleanWord(raw: string): string {
+  // 1. 找到第一个 / 或中文字符的位置
+  const slashIdx = raw.indexOf('/');
+  const chineseIdx = raw.search(/[\u4e00-\u9fa5]/);
+  let endIdx = raw.length;
+  if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+  if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+  
+  // 2. 截取并清理多余字符（保留字母、空格、括号、连字符）
+  let cleaned = raw.substring(0, endIdx).trim();
+  cleaned = cleaned.replace(/[^a-zA-Z\s\(\)\-]/g, '').trim();
+  return cleaned;
 }
 ```
 
-============================================
-二、前端代码
-============================================
+### 2. recognizeAllWords 方法（重写）
 
-### 1. 听写页面 (dictation/index.tsx)
-
-关键修复部分：
-
-```tsx
-// Fix 第三版: 存储canvas node用于导出图片
-const canvasRef = useRef<any>(null)
-
-// initCanvas中存储canvas node
-canvasRef.current = canvas // Fix: 存储canvas node
-
-// clearCanvas使用存储的canvas node
-const clearCanvas = () => {
-  if (canvasRef.current) {
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
-  }
-}
-
-// handleHandwritingSubmit使用canvas node导出
-const handleHandwritingSubmit = async () => {
-  if (!canvasRef.current) {
-    Taro.showToast({ title: 'Canvas未初始化', icon: 'none' })
-    return
-  }
-  const res = await Taro.canvasToTempFilePath({
-    canvas: canvasRef.current,  // Fix: 使用canvas node，不是canvasId
-    fileType: 'png',
-  })
-  // ... 上传并识别
-}
-```
-
-### 2. 词库管理页面 (vocabulary/index.tsx)
-
-关键修复部分：
-
-```tsx
-// Fix 第二版: 统一存储格式辅助函数
-const loadFromStorage = (key: string): WordItem[] => {
-  const raw = Taro.getStorageSync(key)
-  if (!raw) return []
+```typescript
+@Post('recognize-all-words')
+@HttpCode(200)
+async recognizeAllWords(@Body() body: { imageUrl: string }) {
+  const { imageUrl } = body;
+  console.log('[recognize-all-words] imageUrl:', imageUrl);
+  
   try {
-    return typeof raw === 'string' ? JSON.parse(raw) : raw
-  } catch { return [] }
-}
-
-const saveToStorage = (key: string, data: WordItem[]) => {
-  Taro.setStorageSync(key, JSON.stringify(data))
-}
-
-const loadVocabularies = () => {
-  setNewWords(loadFromStorage('new_vocabulary'))
-  setReviewWords(loadFromStorage('review_vocabulary'))
+    const llmResponse = await this.llmClient.invoke(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageUrl } },
+            {
+              type: 'text',
+              text: `Extract all English words/phrases from this image. Return ONLY a JSON array of strings, each string is the English word/phrase (no extra symbols, no Chinese, no phonetic). Example: ["put up", "important", "at school"]`
+            },
+          ],
+        },
+      ],
+      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.2 }
+    );
+    
+    let content = llmResponse?.content || '';
+    console.log('[recognize-all-words] LLM raw content:', content);
+    
+    let rawWords: string[] = [];
+    
+    // 1. 尝试提取 JSON 数组
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      try {
+        rawWords = JSON.parse(jsonMatch[0]);
+      } catch (e) {
+        console.warn('JSON parse failed', e);
+      }
+    }
+    
+    // 2. 如果 JSON 失败，按行拆分（fallback）
+    if (!rawWords.length) {
+      const lines = content.split(/\r?\n/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        rawWords.push(trimmed);
+      }
+    }
+    
+    // 3. Fix 第四版: 统一清洗 — 每个候选词都提取英文部分
+    const words = rawWords
+      .map(w => this.cleanWord(w))
+      .filter(w => w.length > 0);
+    
+    // 4. 去重
+    const uniqueWords = [...new Set(words)];
+    
+    console.log('[recognize-all-words] cleaned words:', uniqueWords);
+    
+    if (uniqueWords.length === 0) {
+      return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
+    }
+    
+    // 翻译每个单词
+    const wordsWithMeanings: WordEntry[] = [];
+    for (const word of uniqueWords) {
+      const meanings = await this.translateWord(word);
+      wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
+    }
+    
+    newWordBank = wordsWithMeanings;
+    return {
+      code: 200,
+      msg: 'success',
+      data: {
+        words: wordsWithMeanings.map(w => ({ word: w.word, meanings: w.meanings })),
+        count: wordsWithMeanings.length,
+      },
+    };
+  } catch (error: any) {
+    console.error('[recognize-all-words] error:', error);
+    return { code: 500, msg: '识别失败: ' + (error?.message || ''), data: null };
+  }
 }
 ```
 
-### 3. 上传页面 (upload/index.tsx)
-
-关键修复部分：
-
-```tsx
-const handleRecognize = async () => {
-  const res = await Network.request({
-    url: '/api/dictation/recognize-all-words',
-    method: 'POST',
-    data: { imageUrl }
-  })
-  const responseData = res?.data
-  if (responseData?.code !== 200) {
-    setErrorMsg(responseData?.msg || '识别失败')
-    return
-  }
-  const wordsData = responseData?.data?.words || responseData?.words
-  if (wordsData && wordsData.length > 0) {
-    // 存储识别结果
-    Taro.setStorageSync('new_vocabulary', JSON.stringify(wordsData))
-  } else {
-    const raw = responseData?.data?.raw
-    setErrorMsg('未识别到单词' + (raw ? `（LLM返回：${raw.substring(0, 100)}）` : ''))
-  }
-}
-```
-
-============================================
-三、配置文件
-============================================
-
-### app.config.ts
+### 3. translateWord 方法（优化）
 
 ```typescript
-export default defineAppConfig({
-  pages: [
-    'pages/index/index',
-    'pages/upload/index',
-    'pages/dictation/index',
-    'pages/vocabulary/index'
-  ],
-  window: { backgroundTextStyle: 'light',navigationBarBackgroundColor: '#fff',navigationBarTitleText: '单词听写',navigationBarTextStyle: 'black' }
-})
+// Fix 第四版: 防止空含义导致异常
+private async translateWord(word: string): Promise<string[]> {
+  try {
+    const response = await this.llmClient.invoke(
+      [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings as JSON array of strings. If no translation, return ["${word}"]` }],
+      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
+    );
+    const content: string = response?.content || '';
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      try {
+        const arr = JSON.parse(jsonMatch[0]);
+        return Array.isArray(arr) && arr.length ? arr : [word];
+      } catch { return [word]; }
+    }
+    return [word];
+  } catch { return [word]; }
+}
 ```
+
+============================================
+二、修复效果
+============================================
+
+**测试场景**：LLM 返回包含音标和中文的 JSON
+
+输入：
+```json
+["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]
+```
+
+cleanWord 处理：
+- `"important /ɪmˈpɔːtnt/ adj. 重要的"` → `"important"`
+- `"notice /ˈnəʊtɪs/ n. 通知"` → `"notice"`
+
+输出：`["important", "notice"]` ✅
 
 ============================================
 程序结束

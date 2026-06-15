@@ -33,6 +33,21 @@ export class DictationController {
     this.asrClient = new ASRClient(config);
   }
 
+  // Fix 第四版: 统一清洗函数 — 只取英文部分
+  private cleanWord(raw: string): string {
+    // 1. 找到第一个 / 或中文字符的位置
+    const slashIdx = raw.indexOf('/');
+    const chineseIdx = raw.search(/[\u4e00-\u9fa5]/);
+    let endIdx = raw.length;
+    if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
+    if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
+    
+    // 2. 截取并清理多余字符（保留字母、空格、括号、连字符）
+    let cleaned = raw.substring(0, endIdx).trim();
+    cleaned = cleaned.replace(/[^a-zA-Z\s\(\)\-]/g, '').trim();
+    return cleaned;
+  }
+
   // ========== Image Upload ==========
   // Fix: Use S3Storage.uploadFile() + generatePresignedUrl() (correct SDK API)
   @Post('upload-image')
@@ -73,12 +88,13 @@ export class DictationController {
   }
 
   // ========== Recognize All Words from Image ==========
-  // Fix: 增强鲁棒性+详细日志
+  // Fix 第四版: 统一清洗 — 无论JSON还是fallback，都调用cleanWord
   @Post('recognize-all-words')
   @HttpCode(200)
   async recognizeAllWords(@Body() body: { imageUrl: string }) {
     const { imageUrl } = body;
     console.log('[recognize-all-words] imageUrl:', imageUrl);
+    
     try {
       const llmResponse = await this.llmClient.invoke(
         [
@@ -88,59 +104,60 @@ export class DictationController {
               { type: 'image_url', image_url: { url: imageUrl } },
               {
                 type: 'text',
-                text: `Extract all English words/phrases from this image. Each line contains a word/phrase, possibly followed by phonetic symbols (after "/") and Chinese meanings. Return ONLY a JSON array of strings, like: ["word1", "word2", "phrase with spaces"]. Do not include any extra text.`,
+                text: `Extract all English words/phrases from this image. Return ONLY a JSON array of strings, each string is the English word/phrase (no extra symbols, no Chinese, no phonetic). Example: ["put up", "important", "at school"]`
               },
             ],
           },
         ],
         { model: 'doubao-seed-2-0-lite-260215', temperature: 0.2 }
       );
+      
       let content = llmResponse?.content || '';
       console.log('[recognize-all-words] LLM raw content:', content);
-      let words: string[] = [];
+      
+      let rawWords: string[] = [];
+      
       // 1. 尝试提取 JSON 数组
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         try {
-          words = JSON.parse(jsonMatch[0]);
+          rawWords = JSON.parse(jsonMatch[0]);
         } catch (e) {
-          console.warn('JSON parse failed, try fallback', e);
+          console.warn('JSON parse failed', e);
         }
       }
-      // 2. 如果失败，按行拆分（每行第一个单词/短语）
-      if (!words.length) {
+      
+      // 2. 如果 JSON 失败，按行拆分（fallback）
+      if (!rawWords.length) {
         const lines = content.split(/\r?\n/);
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-          // Fix: 只提取每行开头的英文部分，遇到 / 或中文就停止
-          // 先找到第一个 / 或中文字符的位置
-          const slashIdx = trimmed.indexOf('/');
-          const chineseIdx = trimmed.search(/[\u4e00-\u9fa5]/);
-          let endIdx = trimmed.length;
-          if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
-          if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
-          // 提取英文部分
-          let englishPart = trimmed.substring(0, endIdx).trim();
-          // 只保留字母、空格、括号
-          englishPart = englishPart.replace(/[^a-zA-Z\s\(\)]/g, '').trim();
-          if (englishPart && englishPart.length > 0) {
-            words.push(englishPart);
-          }
+          rawWords.push(trimmed);
         }
-        console.log('[recognize-all-words] fallback words:', words);
       }
-      // 去重、过滤空
-      words = [...new Set(words.filter(w => w.length > 0))];
-      if (words.length === 0) {
+      
+      // 3. Fix 第四版: 统一清洗 — 每个候选词都提取英文部分
+      const words = rawWords
+        .map(w => this.cleanWord(w))
+        .filter(w => w.length > 0);
+      
+      // 4. 去重
+      const uniqueWords = [...new Set(words)];
+      
+      console.log('[recognize-all-words] cleaned words:', uniqueWords);
+      
+      if (uniqueWords.length === 0) {
         return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
       }
+      
       // 翻译每个单词
       const wordsWithMeanings: WordEntry[] = [];
-      for (const word of words) {
+      for (const word of uniqueWords) {
         const meanings = await this.translateWord(word);
         wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
       }
+      
       newWordBank = wordsWithMeanings;
       return {
         code: 200,
@@ -157,27 +174,27 @@ export class DictationController {
   }
 
   // ========== Translate Word (get all meanings) ==========
-  // Fix: invoke(messages, llmConfig) — correct signature; response.content
+  // Fix 第四版: 防止空含义导致异常
   private async translateWord(word: string): Promise<string[]> {
     try {
       const response = await this.llmClient.invoke(
         [
           {
             role: 'user',
-            content: `Translate the English word/phrase "${word}" into Chinese. List ALL possible meanings (different parts of speech, different contexts). Return ONLY a JSON array of Chinese strings, like: ["含义1", "含义2", "含义3"]. No other text.`,
+            content: `Translate "${word}" into Chinese. List ALL meanings as JSON array of strings. If no translation, return ["${word}"]`,
           },
         ],
         { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
       );
 
-      // Fix: response.content is the string
       const content: string = response?.content || '';
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         try {
-          return JSON.parse(jsonMatch[0]);
+          const arr = JSON.parse(jsonMatch[0]);
+          return Array.isArray(arr) && arr.length ? arr : [word];
         } catch {
-          return [word]; // fallback
+          return [word];
         }
       }
       return [word];
