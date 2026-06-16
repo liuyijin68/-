@@ -1,103 +1,138 @@
 ============================================
-单词听写小程序 - 修复日志（第四版）
+单词听写小程序 - 修复日志（第五版）
 ============================================
 
 ## 本次修复目标
 
-1. **图片识别把整行当单词**：LLM 返回 JSON 数组时，每个字符串包含音标、词性、中文等脏数据
-2. 确保无论 LLM 返回什么格式，都只提取纯英文单词/短语
+1. **朗读无声音**：Google TTS URL 在小程序域名白名单外，无法播放
+2. **重新播放无响应**：播放失败无错误提示，用户不知道问题
+3. **录音无法识别**：ASR 可能失败或返回空
+4. **中文含义显示 undefined**：meanings 数组为空或 undefined
 
 ---
 
 ## 根因分析
 
-第三版代码的清洗逻辑只在"LLM 返回非 JSON 时（fallback）"才执行。
-当 LLM 正常返回 JSON 数组时，直接使用了数组中的原始字符串（可能包含音标、中文等）。
+### 1-2. 发音问题
+- Google TTS URL（`https://translate.google.com/...`）在小程序中被域名白名单限制
+- 前端 `playAudioUrl` 播放失败时静默失败，无错误提示
 
-例如 LLM 返回：
-```json
-["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]
-```
+### 3. 录音问题
+- ASR SDK 可能配额不足或识别失败
+- 前端未处理 ASR 返回空的情况
 
-第三版代码直接用这两个字符串作为单词，导致显示错误。
+### 4. 中文含义 undefined
+- `currentWord?.meanings.join(' / ')` 当 meanings 为 undefined 时报错
+- `checkMeaning(currentWord.meanings, ...)` 未处理 undefined
 
 ---
 
 ## 修复内容
 
-### 1. 添加统一清洗函数
+### 1. 后端 speakWordBoth — 下载TTS音频并上传到自己的存储
 
-文件：`server/src/dictation/dictation.controller.ts`（第36-49行）
-
-```typescript
-// Fix 第四版: 统一清洗函数 — 只取英文部分
-private cleanWord(raw: string): string {
-  // 1. 找到第一个 / 或中文字符的位置
-  const slashIdx = raw.indexOf('/');
-  const chineseIdx = raw.search(/[\u4e00-\u9fa5]/);
-  let endIdx = raw.length;
-  if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
-  if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
-  
-  // 2. 截取并清理多余字符（保留字母、空格、括号、连字符）
-  let cleaned = raw.substring(0, endIdx).trim();
-  cleaned = cleaned.replace(/[^a-zA-Z\s\(\)\-]/g, '').trim();
-  return cleaned;
-}
-```
-
-### 2. 修改 recognizeAllWords 方法
-
-文件：`server/src/dictation/dictation.controller.ts`（第91-173行）
-
-关键改动：无论 JSON 还是 fallback，都调用 cleanWord
+文件：`server/src/dictation/dictation.controller.ts`
 
 ```typescript
-// 3. Fix 第四版: 统一清洗 — 每个候选词都提取英文部分
-const words = rawWords
-  .map(w => this.cleanWord(w))
-  .filter(w => w.length > 0);
+import axios from 'axios'; // Fix 第五版: 用于下载TTS音频
 
-// 4. 去重
-const uniqueWords = [...new Set(words)];
-```
-
-### 3. 修改 translateWord 方法
-
-文件：`server/src/dictation/dictation.controller.ts`（第176-196行）
-
-```typescript
-// Fix 第四版: 防止空含义导致异常
-private async translateWord(word: string): Promise<string[]> {
+// Fix 第五版: 下载并上传音频到自己的存储
+const fetchAndUpload = async (lang: string): Promise<string | null> => {
   try {
-    const response = await this.llmClient.invoke(
-      [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings as JSON array. If no translation, return ["${word}"]` }],
-      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
-    );
-    const content: string = response?.content || '';
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      try {
-        const arr = JSON.parse(jsonMatch[0]);
-        return Array.isArray(arr) && arr.length ? arr : [word];
-      } catch { return [word]; }
+    const url = googleTtsUrl(word, lang);
+    const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
+    const audioBuffer = Buffer.from(response.data);
+    const fileName = `dictation/tts/${Date.now()}_${word}_${lang}.mp3`;
+    const fileKey = await this.storage.uploadFile({
+      fileContent: audioBuffer,
+      fileName,
+      contentType: 'audio/mpeg',
+    });
+    const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
+    return audioUrl;
+  } catch (err) {
+    return null;
+  }
+};
+```
+
+### 2. 前端 playAudioUrl — 增加超时和错误提示
+
+文件：`src/pages/dictation/index.tsx`
+
+```typescript
+// Fix 第五版: 增加超时和错误提示
+function playAudioUrl(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!url) {
+      Taro.showToast({ title: '音频地址为空', icon: 'none' })
+      reject(new Error('音频地址为空'))
+      return
     }
-    return [word];
-  } catch { return [word]; }
+    const audioCtx = Taro.createInnerAudioContext()
+    audioCtx.src = url
+    audioCtx.autoplay = true
+    const timeout = setTimeout(() => {
+      audioCtx.destroy()
+      Taro.showToast({ title: '播放超时', icon: 'none' })
+      reject(new Error('播放超时'))
+    }, 10000)
+    audioCtx.onError((err) => {
+      clearTimeout(timeout)
+      Taro.showToast({ title: '发音加载失败', icon: 'none' })
+      reject(err)
+    })
+  })
 }
 ```
 
----
+### 3. 前端 playWord — 增加超时和错误捕获
 
-## 修复效果验证
+文件：`src/pages/dictation/index.tsx`
 
-**测试输入**：LLM 返回 `["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]`
+```typescript
+const playWord = useCallback(async (word: string) => {
+  try {
+    const res = await Network.request({
+      url: '/api/dictation/speak-word-both',
+      method: 'POST',
+      data: { word },
+      timeout: 15000, // Fix 第五版: 增加超时
+    })
+    // 播放时捕获错误但继续
+    await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
+    await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
+  } catch (err) {
+    Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
+  }
+}, [])
+```
 
-**cleanWord 处理**：
-- `"important /ɪmˈpɔːtnt/ adj. 重要的"` → 找到 `/` 位置 → 截取 `"important "` → 清理后 `"important"`
-- `"notice /ˈnəʊtɪs/ n. 通知"` → 找到 `/` 位置 → 截取 `"notice "` → 清理后 `"notice"`
+### 4. 前端 checkMeaning — 处理 undefined meanings
 
-**最终单词列表**：`["important", "notice"]` ✅
+文件：`src/pages/dictation/index.tsx`
+
+```typescript
+// Fix 第五版: 防止 correctMeanings 为 undefined 或空数组
+const checkMeaning = useCallback((correctMeanings: string[] | undefined, userAnswer: string): boolean => {
+  if (!correctMeanings || correctMeanings.length === 0) {
+    return false
+  }
+  // ... 比对逻辑
+}, [])
+```
+
+### 5. 前端 handleMeaningWrong — 防止显示 undefined
+
+文件：`src/pages/dictation/index.tsx`
+
+```typescript
+// Fix 第五版: 防止 meanings 为 undefined 或空数组时显示 undefined
+const meaningsDisplay = currentWord?.meanings && currentWord.meanings.length > 0 
+  ? currentWord.meanings.join(' / ') 
+  : '(暂无含义)'
+setFeedbackMsg(`错误！正确含义: ${meaningsDisplay}`)
+```
 
 ---
 
@@ -108,7 +143,8 @@ private async translateWord(word: string): Promise<string[]> {
 | 第一版 | 数据解析路径、TTS音频播放、录音ASR识别、中文含义比对、Canvas手写板 |
 | 第二版 | 存储格式统一、图片识别鲁棒性增强 |
 | 第三版 | 图片识别fallback清洗逻辑、Canvas 2D导出修复 |
-| 第四版 | 统一清洗函数，无论JSON还是fallback都调用cleanWord |
+| 第四版 | 统一清洗函数cleanWord，无论JSON还是fallback都只提取纯英文 |
+| 第五版 | TTS音频上传到自己存储解决域名白名单问题、播放错误提示、meanings undefined处理 |
 
 ============================================
 修复日志结束

@@ -32,27 +32,37 @@ const loadWordsFromStorage = (key: string): WordItem[] => {
   }
 }
 
-// Fix Bug 2: 使用 Taro.createInnerAudioContext 播放音频
+// Fix 第五版: 增加超时和错误提示
 function playAudioUrl(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!url) {
-      reject(new Error('No audio URL'))
+      Taro.showToast({ title: '音频地址为空', icon: 'none' })
+      reject(new Error('音频地址为空'))
       return
     }
     try {
       const audioCtx = Taro.createInnerAudioContext()
       audioCtx.src = url
       audioCtx.autoplay = true
+      const timeout = setTimeout(() => {
+        audioCtx.destroy()
+        Taro.showToast({ title: '播放超时', icon: 'none' })
+        reject(new Error('播放超时'))
+      }, 10000)
       audioCtx.onEnded(() => {
+        clearTimeout(timeout)
         audioCtx.destroy()
         resolve()
       })
       audioCtx.onError((err) => {
-        console.error('Audio play error:', err)
+        clearTimeout(timeout)
         audioCtx.destroy()
+        console.error('播放失败:', err)
+        Taro.showToast({ title: '发音加载失败', icon: 'none' })
         reject(err)
       })
     } catch (err) {
+      Taro.showToast({ title: '音频播放异常', icon: 'none' })
       reject(err)
     }
   })
@@ -110,13 +120,14 @@ export default function DictationPage() {
     }
   }, [])
 
-  // Fix Bug 2: 播放单词发音（美式+英式）
+  // Fix 第五版: 播放单词发音，确保捕获错误后仍然继续
   const playWord = useCallback(async (word: string) => {
     try {
       const res = await Network.request({
         url: '/api/dictation/speak-word-both',
         method: 'POST',
         data: { word },
+        timeout: 15000,
       })
       const responseData = res?.data as Record<string, unknown>
       const innerData = responseData?.data as AudioResult | undefined
@@ -124,17 +135,18 @@ export default function DictationPage() {
         const { usAudioUrl, ukAudioUrl } = innerData
         // 先播放美式发音
         if (usAudioUrl) {
-          await playAudioUrl(usAudioUrl)
+          await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
         }
         // 再播放英式发音
         if (ukAudioUrl && ukAudioUrl !== usAudioUrl) {
-          await playAudioUrl(ukAudioUrl)
+          await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
         }
       } else {
         Taro.showToast({ title: '无法获取发音', icon: 'none' })
       }
-    } catch {
-      Taro.showToast({ title: '播放发音失败', icon: 'none' })
+    } catch (err) {
+      console.error('playWord error:', err)
+      Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
     }
   }, [])
 
@@ -150,9 +162,15 @@ export default function DictationPage() {
   }, [phase, currentWord, playWord])
 
   // Fix Bug 4: 中文含义比对 - trim + 忽略大小写 + 去掉标点
-  const checkMeaning = useCallback((correctMeanings: string[], userAnswer: string): boolean => {
+  // Fix 第五版: 防止 correctMeanings 为 undefined 或空数组
+  const checkMeaning = useCallback((correctMeanings: string[] | undefined, userAnswer: string): boolean => {
+    if (!correctMeanings || correctMeanings.length === 0) {
+      console.warn('checkMeaning: correctMeanings is empty or undefined')
+      return false
+    }
     const normalized = userAnswer.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '')
     return correctMeanings.some((meaning) => {
+      if (!meaning) return false
       const normalizedMeaning = meaning.trim().toLowerCase().replace(/[，,。.！!？?；;：:、\s]+/g, '')
       return normalized === normalizedMeaning || normalizedMeaning.includes(normalized) || normalized.includes(normalizedMeaning)
     })
@@ -291,7 +309,11 @@ export default function DictationPage() {
 
   const handleMeaningWrong = () => {
     setMeaningResult('wrong')
-    setFeedbackMsg(`错误！正确含义: ${currentWord?.meanings.join(' / ')}`)
+    // Fix 第五版: 防止 meanings 为 undefined 或空数组时显示 undefined
+    const meaningsDisplay = currentWord?.meanings && currentWord.meanings.length > 0 
+      ? currentWord.meanings.join(' / ') 
+      : '(暂无含义)'
+    setFeedbackMsg(`错误！正确含义: ${meaningsDisplay}`)
     // Fix Bug 3: 答错加入复习库
     addToReview(currentWord)
     setTimeout(() => {

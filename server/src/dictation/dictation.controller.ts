@@ -1,6 +1,7 @@
 import { Controller, Post, Body, UploadedFile, UseInterceptors, HttpCode } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { S3Storage, LLMClient, TTSClient, ASRClient, Config } from 'coze-coding-dev-sdk';
+import axios from 'axios'; // Fix 第五版: 用于下载TTS音频并上传到自己的存储
 
 interface WordEntry {
   word: string;
@@ -204,81 +205,67 @@ export class DictationController {
   }
 
   // ========== Speak Word - Both US and UK Pronunciation ==========
-  // Fix Bug 2: Use TTS SDK synthesize() to generate audio, with free Google TTS fallback
+  // Fix 第五版: 下载TTS音频并上传到自己的存储，解决小程序域名白名单问题
   @Post('speak-word-both')
   @HttpCode(200)
   async speakWordBoth(@Body() body: { word: string }) {
     const { word } = body;
     console.log('[speak-word-both] word:', word);
 
-    // Helper: generate Google Translate TTS URL (free fallback)
     const googleTtsUrl = (text: string, lang: string) =>
       `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
 
-    try {
-      // Use TTS SDK with English-capable voice for US pronunciation
-      const usResponse = await this.ttsClient.synthesize({
-        uid: 'dictation-user',
-        text: word,
-        speaker: 'zh_female_vv_uranus_bigtts',
-        audioFormat: 'mp3',
-        sampleRate: 24000,
-      });
-
-      // For UK pronunciation, use male voice for variety
-      const ukResponse = await this.ttsClient.synthesize({
-        uid: 'dictation-user',
-        text: word,
-        speaker: 'zh_male_m191_uranus_bigtts',
-        audioFormat: 'mp3',
-        sampleRate: 24000,
-      });
-
-      console.log('[speak-word-both] US audio:', usResponse.audioUri);
-      console.log('[speak-word-both] UK audio:', ukResponse.audioUri);
-
-      return {
-        code: 200,
-        msg: 'success',
-        data: {
-          usAudioUrl: usResponse.audioUri,
-          ukAudioUrl: ukResponse.audioUri,
-        },
-      };
-    } catch (error: any) {
-      console.error('[speak-word-both] TTS error:', error?.message || error);
-      // Fallback: use Google Translate free TTS
+    // Fix 第五版: 下载并上传音频到自己的存储
+    const fetchAndUpload = async (lang: string): Promise<string | null> => {
       try {
-        const response = await this.ttsClient.synthesize({
+        const url = googleTtsUrl(word, lang);
+        console.log(`[speak-word-both] fetching TTS for ${lang}:`, url);
+        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
+        const audioBuffer = Buffer.from(response.data);
+        const fileName = `dictation/tts/${Date.now()}_${word.replace(/\s+/g, '_')}_${lang}.mp3`;
+        const fileKey = await this.storage.uploadFile({
+          fileContent: audioBuffer,
+          fileName,
+          contentType: 'audio/mpeg',
+        });
+        const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
+        console.log(`[speak-word-both] uploaded TTS for ${lang}:`, audioUrl);
+        return audioUrl;
+      } catch (err) {
+        console.error(`[speak-word-both] TTS download failed for ${lang}:`, err?.message || err);
+        return null;
+      }
+    };
+
+    let usAudioUrl = await fetchAndUpload('en');
+    let ukAudioUrl = await fetchAndUpload('en-GB');
+
+    // 如果都失败，尝试使用 TTS SDK
+    if (!usAudioUrl) {
+      try {
+        const usResp = await this.ttsClient.synthesize({
           uid: 'dictation-user',
           text: word,
           speaker: 'zh_female_vv_uranus_bigtts',
           audioFormat: 'mp3',
           sampleRate: 24000,
         });
-        return {
-          code: 200,
-          msg: 'success (single voice fallback)',
-          data: {
-            usAudioUrl: response.audioUri,
-            ukAudioUrl: response.audioUri,
-          },
-        };
-      } catch {
-        // Final fallback: Google Translate TTS (free, no auth needed)
-        const usUrl = googleTtsUrl(word, 'en');
-        const ukUrl = googleTtsUrl(word, 'en-GB');
-        console.log('[speak-word-both] using Google TTS fallback:', usUrl);
-        return {
-          code: 200,
-          msg: 'success (Google TTS fallback)',
-          data: {
-            usAudioUrl: usUrl,
-            ukAudioUrl: ukUrl,
-          },
-        };
+        usAudioUrl = usResp.audioUri;
+        console.log('[speak-word-both] TTS SDK US:', usAudioUrl);
+      } catch (e) {
+        console.error('[speak-word-both] TTS SDK failed:', e?.message || e);
       }
     }
+
+    if (!ukAudioUrl) {
+      ukAudioUrl = usAudioUrl; // 备用相同
+    }
+
+    return {
+      code: 200,
+      msg: 'success',
+      data: { usAudioUrl: usAudioUrl || '', ukAudioUrl: ukAudioUrl || '' },
+    };
   }
 
   // ========== Upload Audio for ASR ==========

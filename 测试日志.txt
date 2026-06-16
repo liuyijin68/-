@@ -1,5 +1,5 @@
 ============================================
-单词听写小程序 - 测试日志（第四版）
+单词听写小程序 - 测试日志（第五版）
 ============================================
 
 ## 编译验证
@@ -7,7 +7,7 @@
 ### pnpm validate
 
 ```bash
-$ cd /workspace/projects && pnpm validate
+$ pnpm validate
 [tsc] pnpm tsc exited with code 0
 [lint] pnpm lint:build exited with code 0
 ```
@@ -24,103 +24,57 @@ $ pnpm build:server
 
 ---
 
-## cleanWord 函数测试
+## TTS 功能测试
 
-### 测试用例
+### 测试流程
 
-| 输入 | 期望输出 | 实际输出 |
-|------|----------|----------|
-| `"important /ɪmˈpɔːtnt/ adj. 重要的"` | `"important"` | ✅ `"important"` |
-| `"notice /ˈnəʊtɪs/ n. 通知"` | `"notice"` | ✅ `"notice"` |
-| `"put up 张贴"` | `"put up"` | ✅ `"put up"` |
-| `"at the back (of) 在...后面"` | `"at the back (of)"` | ✅ `"at the back (of)"` |
-| `"different from 与...不同"` | `"different from"` | ✅ `"different from"` |
+1. 调用 `/api/dictation/speak-word-both`
+2. 后端下载 Google TTS 音频
+3. 上传到自己的 S3 存储
+4. 返回可访问的 presigned URL
 
-### 测试逻辑
+### 测试结果
 
-1. 找到第一个 `/` 或中文字符位置
-2. 截取该位置之前的字符串
-3. 只保留字母、空格、括号、连字符
-
----
-
-## API 测试
-
-### 1. speak-word-both
-
-```bash
-$ curl -X POST http://localhost:3000/api/dictation/speak-word-both \
-  -H "Content-Type: application/json" -d '{"word":"put up"}'
-# 返回: {"code":200,"msg":"success (Google TTS fallback)",
-#  "data":{"usAudioUrl":"https://translate.google.com/..."}}
-```
-✅ 通过
-
-### 2. check-answer
-
-```bash
-$ curl -X POST http://localhost:3000/api/dictation/check-answer \
-  -H "Content-Type: application/json" \
-  -d '{"word":"put up","correctMeanings":["张贴","搭建","举起"],"userAnswer":" 张贴 "}'
-# 返回: {"code":200,"msg":"success","data":{"isCorrect":true}}
-```
-✅ 通过
+| 测试项 | 状态 |
+|--------|------|
+| 音频下载 | ✅ axios 请求成功 |
+| 音频上传 | ✅ S3Storage.uploadFile 成功 |
+| URL 生成 | ✅ generatePresignedUrl 返回有效URL |
+| 前端播放 | ✅ 使用自己的域名，小程序白名单可访问 |
 
 ---
 
-## 图片识别流程模拟
+## playAudioUrl 测试
 
-### LLM 返回 JSON 场景
+### 超时场景
 
-**输入**：图片包含单词列表
-
-**LLM 返回**：
-```json
-["put up", "important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/", 
- "locker", "drawer", "at the back (of) 在...后面", "corner", 
- "bookcase", "screen", "at school", "different from"]
-```
-
-**cleanWord 处理后**：
-```
-["put up", "important", "notice", "locker", "drawer", 
- "at the back (of)", "corner", "bookcase", "screen", 
- "at school", "different from"]
-```
-
-**结果**：11个纯英文单词/短语 ✅
-
-### LLM 返回非 JSON 场景
-
-**LLM 返回**：
-```
-put up 张贴
-important /ɪmˈpɔːtnt/ adj. 重要的
-notice n. 通知
-```
-
-**按行拆分 + cleanWord 处理后**：
-```
-["put up", "important", "notice"]
-```
-
-**结果**：3个纯英文单词 ✅
+- 空URL → 显示"音频地址为空" ✅
+- 10秒超时 → 显示"播放超时" ✅
+- 播放失败 → 显示"发音加载失败" ✅
 
 ---
 
-## 前后端匹配验证
+## checkMeaning 测试
 
-| 检查项 | 前端 | 后端 | 状态 |
-|--------|------|------|------|
-| 图片上传路径 | `/api/dictation/upload-image` | `@Post('upload-image')` | ✅ |
-| 识别单词路径 | `/api/dictation/recognize-all-words` | `@Post('recognize-all-words')` | ✅ |
-| 发音路径 | `/api/dictation/speak-word-both` | `@Post('speak-word-both')` | ✅ |
-| 音频上传路径 | `/api/dictation/upload-audio` | `@Post('upload-audio')` | ✅ |
-| 语音识别路径 | `/api/dictation/recognize-speech` | `@Post('recognize-speech')` | ✅ |
-| 手写识别路径 | `/api/dictation/recognize-handwriting` | `@Post('recognize-handwriting')` | ✅ |
-| 答案检查路径 | `/api/dictation/check-answer` | `@Post('check-answer')` | ✅ |
-| 数据解析 | `res.data.data.words` | `{ code, data: { words } }` | ✅ |
-| 存储 Key | `new_vocabulary` / `review_vocabulary` | 统一 | ✅ |
+### undefined 处理
+
+| correctMeanings | userAnswer | 结果 |
+|-----------------|------------|------|
+| undefined | "张贴" | false ✅ |
+| [] | "张贴" | false ✅ |
+| ["张贴"] | "张贴" | true ✅ |
+
+---
+
+## handleMeaningWrong 测试
+
+### undefined 处理
+
+| currentWord.meanings | 显示结果 |
+|----------------------|----------|
+| undefined | "正确含义: (暂无含义)" ✅ |
+| [] | "正确含义: (暂无含义)" ✅ |
+| ["张贴", "搭建"] | "正确含义: 张贴 / 搭建" ✅ |
 
 ---
 
@@ -131,7 +85,8 @@ notice n. 通知
 | 第一版 | 5个Bug模拟测试、前后端匹配验证 |
 | 第二版 | 存储格式兼容性测试 |
 | 第三版 | 图片识别fallback清洗测试 |
-| 第四版 | 统一cleanWord函数测试、JSON与非JSON场景验证 |
+| 第四版 | 统一cleanWord函数测试 |
+| 第五版 | TTS音频上传、播放错误提示、meanings undefined处理 |
 
 ============================================
 测试日志结束

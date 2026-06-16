@@ -1,160 +1,136 @@
 ============================================
-单词听写小程序 - 完整程序（第四版）
+单词听写小程序 - 完整程序（第五版）
 ============================================
-修复内容：统一清洗函数，无论JSON还是fallback都只提取纯英文
+修复内容：TTS音频上传到自己存储、播放错误提示、meanings undefined处理
 
 ============================================
 一、后端核心修复代码
 ============================================
 
-文件：server/src/dictation/dictation.controller.ts
-
-### 1. 统一清洗函数（新增）
+### 1. 添加 axios 导入
 
 ```typescript
-// Fix 第四版: 统一清洗函数 — 只取英文部分
-private cleanWord(raw: string): string {
-  // 1. 找到第一个 / 或中文字符的位置
-  const slashIdx = raw.indexOf('/');
-  const chineseIdx = raw.search(/[\u4e00-\u9fa5]/);
-  let endIdx = raw.length;
-  if (slashIdx !== -1 && slashIdx < endIdx) endIdx = slashIdx;
-  if (chineseIdx !== -1 && chineseIdx < endIdx) endIdx = chineseIdx;
-  
-  // 2. 截取并清理多余字符（保留字母、空格、括号、连字符）
-  let cleaned = raw.substring(0, endIdx).trim();
-  cleaned = cleaned.replace(/[^a-zA-Z\s\(\)\-]/g, '').trim();
-  return cleaned;
-}
+import axios from 'axios'; // Fix 第五版: 用于下载TTS音频
 ```
 
-### 2. recognizeAllWords 方法（重写）
+### 2. speakWordBoth 方法（重写）
 
 ```typescript
-@Post('recognize-all-words')
+@Post('speak-word-both')
 @HttpCode(200)
-async recognizeAllWords(@Body() body: { imageUrl: string }) {
-  const { imageUrl } = body;
-  console.log('[recognize-all-words] imageUrl:', imageUrl);
-  
-  try {
-    const llmResponse = await this.llmClient.invoke(
-      [
-        {
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: imageUrl } },
-            {
-              type: 'text',
-              text: `Extract all English words/phrases from this image. Return ONLY a JSON array of strings, each string is the English word/phrase (no extra symbols, no Chinese, no phonetic). Example: ["put up", "important", "at school"]`
-            },
-          ],
-        },
-      ],
-      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.2 }
-    );
-    
-    let content = llmResponse?.content || '';
-    console.log('[recognize-all-words] LLM raw content:', content);
-    
-    let rawWords: string[] = [];
-    
-    // 1. 尝试提取 JSON 数组
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      try {
-        rawWords = JSON.parse(jsonMatch[0]);
-      } catch (e) {
-        console.warn('JSON parse failed', e);
-      }
+async speakWordBoth(@Body() body: { word: string }) {
+  const { word } = body;
+  console.log('[speak-word-both] word:', word);
+
+  const googleTtsUrl = (text: string, lang: string) =>
+    `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
+
+  // Fix 第五版: 下载并上传音频到自己的存储
+  const fetchAndUpload = async (lang: string): Promise<string | null> => {
+    try {
+      const url = googleTtsUrl(word, lang);
+      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
+      const audioBuffer = Buffer.from(response.data);
+      const fileName = `dictation/tts/${Date.now()}_${word}_${lang}.mp3`;
+      const fileKey = await this.storage.uploadFile({
+        fileContent: audioBuffer,
+        fileName,
+        contentType: 'audio/mpeg',
+      });
+      const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
+      return audioUrl;
+    } catch (err) {
+      console.error(`TTS download failed for ${lang}:`, err?.message || err);
+      return null;
     }
-    
-    // 2. 如果 JSON 失败，按行拆分（fallback）
-    if (!rawWords.length) {
-      const lines = content.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        rawWords.push(trimmed);
-      }
-    }
-    
-    // 3. Fix 第四版: 统一清洗 — 每个候选词都提取英文部分
-    const words = rawWords
-      .map(w => this.cleanWord(w))
-      .filter(w => w.length > 0);
-    
-    // 4. 去重
-    const uniqueWords = [...new Set(words)];
-    
-    console.log('[recognize-all-words] cleaned words:', uniqueWords);
-    
-    if (uniqueWords.length === 0) {
-      return { code: 200, msg: 'success', data: { words: [], count: 0, raw: content } };
-    }
-    
-    // 翻译每个单词
-    const wordsWithMeanings: WordEntry[] = [];
-    for (const word of uniqueWords) {
-      const meanings = await this.translateWord(word);
-      wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
-    }
-    
-    newWordBank = wordsWithMeanings;
-    return {
-      code: 200,
-      msg: 'success',
-      data: {
-        words: wordsWithMeanings.map(w => ({ word: w.word, meanings: w.meanings })),
-        count: wordsWithMeanings.length,
-      },
-    };
-  } catch (error: any) {
-    console.error('[recognize-all-words] error:', error);
-    return { code: 500, msg: '识别失败: ' + (error?.message || ''), data: null };
+  };
+
+  let usAudioUrl = await fetchAndUpload('en');
+  let ukAudioUrl = await fetchAndUpload('en-GB');
+
+  // 如果都失败，尝试使用 TTS SDK
+  if (!usAudioUrl) {
+    try {
+      const usResp = await this.ttsClient.synthesize({ ... });
+      usAudioUrl = usResp.audioUri;
+    } catch (e) { }
   }
+  if (!ukAudioUrl) ukAudioUrl = usAudioUrl;
+
+  return { code: 200, data: { usAudioUrl: usAudioUrl || '', ukAudioUrl: ukAudioUrl || '' } };
 }
 ```
 
-### 3. translateWord 方法（优化）
+============================================
+二、前端核心修复代码
+============================================
+
+### 1. playAudioUrl（增加超时和错误提示）
 
 ```typescript
-// Fix 第四版: 防止空含义导致异常
-private async translateWord(word: string): Promise<string[]> {
-  try {
-    const response = await this.llmClient.invoke(
-      [{ role: 'user', content: `Translate "${word}" into Chinese. List ALL meanings as JSON array of strings. If no translation, return ["${word}"]` }],
-      { model: 'doubao-seed-2-0-lite-260215', temperature: 0.3 },
-    );
-    const content: string = response?.content || '';
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      try {
-        const arr = JSON.parse(jsonMatch[0]);
-        return Array.isArray(arr) && arr.length ? arr : [word];
-      } catch { return [word]; }
+// Fix 第五版: 增加超时和错误提示
+function playAudioUrl(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!url) {
+      Taro.showToast({ title: '音频地址为空', icon: 'none' })
+      reject(new Error('音频地址为空'))
+      return
     }
-    return [word];
-  } catch { return [word]; }
+    const audioCtx = Taro.createInnerAudioContext()
+    audioCtx.src = url
+    audioCtx.autoplay = true
+    const timeout = setTimeout(() => {
+      audioCtx.destroy()
+      Taro.showToast({ title: '播放超时', icon: 'none' })
+      reject(new Error('播放超时'))
+    }, 10000)
+    audioCtx.onEnded(() => { clearTimeout(timeout); audioCtx.destroy(); resolve() })
+    audioCtx.onError((err) => {
+      clearTimeout(timeout)
+      audioCtx.destroy()
+      Taro.showToast({ title: '发音加载失败', icon: 'none' })
+      reject(err)
+    })
+  })
 }
 ```
 
-============================================
-二、修复效果
-============================================
+### 2. playWord（增加超时和错误捕获）
 
-**测试场景**：LLM 返回包含音标和中文的 JSON
-
-输入：
-```json
-["important /ɪmˈpɔːtnt/ adj. 重要的", "notice /ˈnəʊtɪs/ n. 通知"]
+```typescript
+const playWord = useCallback(async (word: string) => {
+  try {
+    const res = await Network.request({
+      url: '/api/dictation/speak-word-both',
+      method: 'POST',
+      data: { word },
+      timeout: 15000, // Fix 第五版
+    })
+    await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
+    await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
+  } catch (err) {
+    Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
+  }
+}, [])
 ```
 
-cleanWord 处理：
-- `"important /ɪmˈpɔːtnt/ adj. 重要的"` → `"important"`
-- `"notice /ˈnəʊtɪs/ n. 通知"` → `"notice"`
+### 3. checkMeaning（处理 undefined）
 
-输出：`["important", "notice"]` ✅
+```typescript
+const checkMeaning = useCallback((correctMeanings: string[] | undefined, userAnswer: string): boolean => {
+  if (!correctMeanings || correctMeanings.length === 0) return false
+  // ... 比对逻辑
+}, [])
+```
+
+### 4. handleMeaningWrong（防止显示 undefined）
+
+```typescript
+const meaningsDisplay = currentWord?.meanings && currentWord.meanings.length > 0 
+  ? currentWord.meanings.join(' / ') 
+  : '(暂无含义)'
+setFeedbackMsg(`错误！正确含义: ${meaningsDisplay}`)
+```
 
 ============================================
 程序结束
