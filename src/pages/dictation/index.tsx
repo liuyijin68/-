@@ -32,36 +32,54 @@ const loadWordsFromStorage = (key: string): WordItem[] => {
   }
 }
 
-// Fix 第五版: 增加超时和错误提示
+// Fix 第六版: 增加详细日志和 onPlay 回调
 function playAudioUrl(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!url) {
+      console.log('[playAudioUrl] 音频地址为空')
       Taro.showToast({ title: '音频地址为空', icon: 'none' })
       reject(new Error('音频地址为空'))
       return
     }
     try {
+      console.log('[playAudioUrl] 开始播放:', url)
       const audioCtx = Taro.createInnerAudioContext()
       audioCtx.src = url
       audioCtx.autoplay = true
+      let resolved = false
       const timeout = setTimeout(() => {
-        audioCtx.destroy()
-        Taro.showToast({ title: '播放超时', icon: 'none' })
-        reject(new Error('播放超时'))
-      }, 10000)
+        if (!resolved) {
+          resolved = true
+          audioCtx.destroy()
+          console.log('[playAudioUrl] 播放超时')
+          Taro.showToast({ title: '播放超时，请检查网络', icon: 'none' })
+          reject(new Error('播放超时'))
+        }
+      }, 15000)
+      audioCtx.onPlay(() => {
+        console.log('[playAudioUrl] 播放中')
+      })
       audioCtx.onEnded(() => {
-        clearTimeout(timeout)
-        audioCtx.destroy()
-        resolve()
+        if (!resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          audioCtx.destroy()
+          console.log('[playAudioUrl] 播放结束')
+          resolve()
+        }
       })
       audioCtx.onError((err) => {
-        clearTimeout(timeout)
-        audioCtx.destroy()
-        console.error('播放失败:', err)
-        Taro.showToast({ title: '发音加载失败', icon: 'none' })
-        reject(err)
+        if (!resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          audioCtx.destroy()
+          console.error('[playAudioUrl] 播放错误:', JSON.stringify(err))
+          Taro.showToast({ title: '发音加载失败，请检查网络', icon: 'none' })
+          reject(err)
+        }
       })
     } catch (err) {
+      console.error('[playAudioUrl] 异常:', err)
       Taro.showToast({ title: '音频播放异常', icon: 'none' })
       reject(err)
     }
@@ -177,55 +195,64 @@ export default function DictationPage() {
   }, [])
 
   // Fix Bug 3: 录音识别 — 录音 → 上传到存储 → ASR识别
-  const startRecording = useCallback(() => {
+  const toggleRecording = useCallback(() => {
     const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
     if (!isMiniApp) {
       Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
       return
     }
-    try {
-      const recorderManager = Taro.getRecorderManager()
-      recorderManager.onStop((res) => {
+    if (isRecording) {
+      // 停止录音
+      try {
+        const recorderManager = Taro.getRecorderManager()
+        recorderManager.stop()
+      } catch {
         setIsRecording(false)
-        if (res.tempFilePath) {
-          handleVoiceResult(res.tempFilePath)
-        }
-      })
-      recorderManager.onError(() => {
-        setIsRecording(false)
-        Taro.showToast({ title: '录音失败', icon: 'none' })
-      })
-      recorderManager.start({
-        format: 'wav',
-        sampleRate: 16000,
-        numberOfChannels: 1,
-      })
-      setIsRecording(true)
-    } catch {
-      Taro.showToast({ title: '录音功能不可用', icon: 'none' })
+      }
+    } else {
+      // 开始录音
+      try {
+        const recorderManager = Taro.getRecorderManager()
+        recorderManager.onStop((res) => {
+          console.log('[录音] 录音停止, tempFilePath:', res.tempFilePath, 'duration:', res.duration)
+          setIsRecording(false)
+          if (res.tempFilePath) {
+            handleVoiceResult(res.tempFilePath)
+          } else {
+            Taro.showToast({ title: '录音文件获取失败', icon: 'none' })
+          }
+        })
+        recorderManager.onError((err) => {
+          console.error('[录音] 录音错误:', JSON.stringify(err))
+          setIsRecording(false)
+          Taro.showToast({ title: '录音失败，请重试', icon: 'none' })
+        })
+        recorderManager.start({
+          format: 'wav',
+          sampleRate: 16000,
+          numberOfChannels: 1,
+        })
+        setIsRecording(true)
+        console.log('[录音] 开始录音')
+      } catch (err) {
+        console.error('[录音] 启动失败:', err)
+        Taro.showToast({ title: '录音功能不可用', icon: 'none' })
+      }
     }
-  }, [])
+  }, [isRecording])
 
-  const stopRecording = useCallback(() => {
-    try {
-      const recorderManager = Taro.getRecorderManager()
-      recorderManager.stop()
-    } catch {
-      setIsRecording(false)
-    }
-  }, [])
-
-  // Fix Bug 3: 录音后上传到存储，再调用ASR
+  // Fix 第六版: 录音后上传到存储，再调用ASR，增加详细日志
   const handleVoiceResult = async (tempFilePath: string) => {
     try {
       Taro.showLoading({ title: '识别中...' })
+      console.log('[ASR] 开始上传录音:', tempFilePath)
       // Step 1: 上传录音文件到对象存储
       const uploadRes = await Network.uploadFile({
         url: '/api/dictation/upload-audio',
         filePath: tempFilePath,
         name: 'audio',
       })
-      console.log('Audio upload response:', uploadRes)
+      console.log('[ASR] 上传响应:', uploadRes)
 
       let uploadData: Record<string, unknown> = (typeof uploadRes?.data === 'string' ? JSON.parse(uploadRes.data) : uploadRes?.data) as Record<string, unknown> || {}
       const innerData = uploadData?.data as Record<string, unknown> | undefined
@@ -233,35 +260,43 @@ export default function DictationPage() {
 
       if (!audioUrl) {
         Taro.hideLoading()
+        console.log('[ASR] 音频上传失败，无audioUrl')
         Taro.showToast({ title: '音频上传失败', icon: 'none' })
         return
       }
+      console.log('[ASR] 音频URL:', audioUrl)
 
       // Step 2: 调用ASR识别
       const res = await Network.request({
         url: '/api/dictation/recognize-speech',
         method: 'POST',
         data: { audioUrl },
+        timeout: 10000,
       })
       const result = res?.data as Record<string, unknown>
-      const asrData = result?.data as { text: string } | undefined
+      console.log('[ASR] 识别响应:', result)
       Taro.hideLoading()
 
-      if (result?.code === 200 && asrData?.text) {
-        const recognizedText = asrData.text.trim()
-        console.log('ASR recognized:', recognizedText)
-        // Fix Bug 4: 比对中文含义
-        if (currentWord && checkMeaning(currentWord.meanings, recognizedText)) {
-          handleMeaningCorrect()
-        } else {
-          handleMeaningWrong()
-        }
+      if (result?.code !== 200) {
+        Taro.showToast({ title: (result?.msg as string) || '语音识别失败', icon: 'none' })
+        return
+      }
+      const asrData = result?.data as { text: string } | undefined
+      const recognizedText = asrData?.text?.trim()
+      if (!recognizedText) {
+        Taro.showToast({ title: '未识别到语音内容，请大声清晰朗读', icon: 'none' })
+        return
+      }
+      console.log('[ASR] 识别文本:', recognizedText)
+      // Fix Bug 4: 比对中文含义
+      if (currentWord && checkMeaning(currentWord.meanings, recognizedText)) {
+        handleMeaningCorrect()
       } else {
-        Taro.showToast({ title: '未识别到语音内容，请重试', icon: 'none' })
+        handleMeaningWrong()
       }
     } catch (err) {
       Taro.hideLoading()
-      console.error('Voice recognition error:', err)
+      console.error('[ASR] 识别异常:', err)
       Taro.showToast({ title: '语音识别失败，请手动输入含义', icon: 'none' })
     }
   }
@@ -288,6 +323,18 @@ export default function DictationPage() {
         goToNext()
       }, 2000)
     }
+  }
+
+  // Fix 第六版: 拼写阶段"不知道"按钮
+  const handleSpellingDontKnow = () => {
+    if (!currentWord) return
+    setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings && currentWord.meanings.length > 0 ? currentWord.meanings.join(' / ') : '(暂无含义)'}`)
+    addToReview(currentWord)
+    setTimeout(() => {
+      setFeedbackMsg('')
+      setSpellingInput('')
+      goToNext()
+    }, 2500)
   }
 
   // Fix Bug 3: 正确时自动继续
@@ -620,13 +667,22 @@ export default function DictationPage() {
                 <Pencil size={18} color="#666" />
               </Button>
             </View>
-            <Button
-              className="w-full bg-blue-500 text-white rounded-xl py-3 mt-4"
-              onClick={handleSpellingSubmit}
-              disabled={!spellingInput.trim()}
-            >
-              提交拼写
-            </Button>
+            <View className="flex flex-row gap-2 mt-4">
+              <Button
+                className="flex-1 bg-blue-500 text-white rounded-xl py-3"
+                onClick={handleSpellingSubmit}
+                disabled={!spellingInput.trim()}
+              >
+                提交拼写
+              </Button>
+              {/* Fix 第六版: 拼写阶段增加"不知道"按钮 */}
+              <Button
+                className="flex-1 bg-gray-300 text-gray-700 rounded-xl py-3"
+                onClick={handleSpellingDontKnow}
+              >
+                不知道
+              </Button>
+            </View>
           </View>
         )}
 
@@ -635,12 +691,11 @@ export default function DictationPage() {
           <View className="w-full">
             <Text className="block text-gray-500 text-sm mb-2">请说出中文含义：</Text>
             <View className="flex flex-row gap-3 justify-center mb-4">
-              {/* Fix Bug 3: 录音按钮 */}
+              {/* Fix 第六版: 录音按钮改为点击切换模式 */}
               <Button
                 size="lg"
                 className={`rounded-full w-16 h-16 flex items-center justify-center ${isRecording ? 'bg-red-500' : 'bg-blue-500'}`}
-                onTouchStart={startRecording}
-                onTouchEnd={stopRecording}
+                onClick={toggleRecording}
               >
                 <Mic size={28} color="#fff" />
               </Button>

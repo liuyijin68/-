@@ -1,137 +1,480 @@
 ============================================
-单词听写小程序 - 完整程序（第五版）
-============================================
-修复内容：TTS音频上传到自己存储、播放错误提示、meanings undefined处理
-
-============================================
-一、后端核心修复代码
+单词听写小程序 - 第六版完整程序
 ============================================
 
-### 1. 添加 axios 导入
-
-```typescript
-import axios from 'axios'; // Fix 第五版: 用于下载TTS音频
+## 文件结构
+```
+src/pages/
+  index/index.tsx        - 入口页（选择词库）
+  upload/index.tsx       - 上传识别页
+  dictation/index.tsx    - 听写流程页
+  vocabulary/index.tsx   - 词库管理页
+server/src/dictation/
+  dictation.controller.ts - 后端API
+  dictation.module.ts     - 模块定义
 ```
 
-### 2. speakWordBoth 方法（重写）
+============================================
+## 文件一：src/pages/index/index.tsx（入口页）
+============================================
 
-```typescript
-@Post('speak-word-both')
-@HttpCode(200)
-async speakWordBoth(@Body() body: { word: string }) {
-  const { word } = body;
-  console.log('[speak-word-both] word:', word);
+import { View, Text } from '@tarojs/components'
+import Taro from '@tarojs/taro'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { BookOpen, RefreshCw, Settings } from 'lucide-react-taro'
 
-  const googleTtsUrl = (text: string, lang: string) =>
-    `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
+export default function IndexPage() {
+  const goToUpload = () => {
+    Taro.navigateTo({ url: '/pages/upload/index' })
+  }
 
-  // Fix 第五版: 下载并上传音频到自己的存储
-  const fetchAndUpload = async (lang: string): Promise<string | null> => {
+  const goToDictation = (type: 'new' | 'review') => {
+    Taro.navigateTo({ url: `/pages/dictation/index?type=${type}` })
+  }
+
+  const goToVocabulary = () => {
+    Taro.navigateTo({ url: '/pages/vocabulary/index' })
+  }
+
+  return (
+    <View className="flex flex-col h-screen bg-gray-50">
+      {/* 头部 */}
+      <View className="bg-blue-500 pt-12 pb-8 px-6 rounded-b-3xl">
+        <Text className="block text-white text-2xl font-bold mb-1">单词听写</Text>
+        <Text className="block text-blue-100 text-sm">拍照识别 · 语音听写 · 智能复习</Text>
+      </View>
+
+      {/* 词库选择 */}
+      <View className="px-4 -mt-4">
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <View className="flex flex-row items-center gap-3 mb-3">
+              <BookOpen size={24} color="#3b82f6" />
+              <View className="flex-1">
+                <Text className="block text-lg font-semibold">新单词听写</Text>
+                <Text className="block text-gray-400 text-sm">拍照上传单词，开始听写</Text>
+              </View>
+            </View>
+            <View className="flex flex-row gap-2">
+              <Button className="flex-1 bg-blue-500 text-white rounded-xl py-3" onClick={goToUpload}>
+                上传照片
+              </Button>
+              <Button className="flex-1 bg-blue-500 text-white rounded-xl py-3" onClick={() => goToDictation('new')}>
+                开始听写
+              </Button>
+            </View>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4">
+          <CardContent className="p-4">
+            <View className="flex flex-row items-center gap-3 mb-3">
+              <RefreshCw size={24} color="#f59e0b" />
+              <View className="flex-1">
+                <Text className="block text-lg font-semibold">复习听写</Text>
+                <Text className="block text-gray-400 text-sm">复习之前答错的单词</Text>
+              </View>
+            </View>
+            <Button className="w-full bg-amber-500 text-white rounded-xl py-3" onClick={() => goToDictation('review')}>
+              开始复习
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <View className="flex flex-row items-center gap-3 mb-3">
+              <Settings size={24} color="#8b5cf6" />
+              <View className="flex-1">
+                <Text className="block text-lg font-semibold">词库管理</Text>
+                <Text className="block text-gray-400 text-sm">手动管理两个词库的单词</Text>
+              </View>
+            </View>
+            <Button className="w-full bg-purple-500 text-white rounded-xl py-3" onClick={goToVocabulary}>
+              管理词库
+            </Button>
+          </CardContent>
+        </Card>
+      </View>
+    </View>
+  )
+}
+
+============================================
+## 文件二：src/pages/upload/index.tsx（上传识别页）
+============================================
+
+import { useState } from 'react'
+import { View, Text } from '@tarojs/components'
+import Taro from '@tarojs/taro'
+import { Network } from '@/network'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Camera, Loader, Check, ImageUp } from 'lucide-react-taro'
+
+interface WordItem {
+  word: string
+  meanings: string[]
+  date: string
+}
+
+export default function UploadPage() {
+  const [imageUrl, setImageUrl] = useState('')
+  const [words, setWords] = useState<WordItem[]>([])
+  const [isRecognizing, setIsRecognizing] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const handleChooseImage = async () => {
     try {
-      const url = googleTtsUrl(word, lang);
-      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
-      const audioBuffer = Buffer.from(response.data);
-      const fileName = `dictation/tts/${Date.now()}_${word}_${lang}.mp3`;
-      const fileKey = await this.storage.uploadFile({
-        fileContent: audioBuffer,
-        fileName,
-        contentType: 'audio/mpeg',
-      });
-      const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
-      return audioUrl;
+      const res = await Taro.chooseImage({ count: 1, sizeType: ['compressed'], sourceType: ['album', 'camera'] })
+      const tempFilePath = res.tempFilePaths[0]
+      Taro.showLoading({ title: '上传中...' })
+      const uploadRes = await Network.uploadFile({ url: '/api/dictation/upload-image', filePath: tempFilePath, name: 'image' })
+      Taro.hideLoading()
+      let uploadData: Record<string, unknown> = (typeof uploadRes?.data === 'string' ? JSON.parse(uploadRes.data) : uploadRes?.data) as Record<string, unknown> || {}
+      const innerData = uploadData?.data as Record<string, unknown> | undefined
+      const uploadedUrl = (innerData?.imageUrl || uploadData?.imageUrl) as string | undefined
+      if (uploadedUrl) {
+        setImageUrl(uploadedUrl)
+        setWords([])
+        setErrorMsg('')
+        Taro.showToast({ title: '上传成功', icon: 'success' })
+      } else {
+        setErrorMsg('上传失败，请重试')
+      }
     } catch (err) {
-      console.error(`TTS download failed for ${lang}:`, err?.message || err);
-      return null;
+      Taro.hideLoading()
+      console.error('上传失败:', err)
+      setErrorMsg('上传失败，请重试')
     }
-  };
+  }
 
-  let usAudioUrl = await fetchAndUpload('en');
-  let ukAudioUrl = await fetchAndUpload('en-GB');
-
-  // 如果都失败，尝试使用 TTS SDK
-  if (!usAudioUrl) {
+  const handleRecognize = async () => {
+    if (!imageUrl) { setErrorMsg('请先上传照片'); return }
+    setIsRecognizing(true)
+    setErrorMsg('')
     try {
-      const usResp = await this.ttsClient.synthesize({ ... });
-      usAudioUrl = usResp.audioUri;
-    } catch (e) { }
-  }
-  if (!ukAudioUrl) ukAudioUrl = usAudioUrl;
-
-  return { code: 200, data: { usAudioUrl: usAudioUrl || '', ukAudioUrl: ukAudioUrl || '' } };
-}
-```
-
-============================================
-二、前端核心修复代码
-============================================
-
-### 1. playAudioUrl（增加超时和错误提示）
-
-```typescript
-// Fix 第五版: 增加超时和错误提示
-function playAudioUrl(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!url) {
-      Taro.showToast({ title: '音频地址为空', icon: 'none' })
-      reject(new Error('音频地址为空'))
-      return
+      const res = await Network.request({ url: '/api/dictation/recognize-all-words', method: 'POST', data: { imageUrl } })
+      console.log('Recognize response:', res)
+      const responseData = res?.data as Record<string, unknown>
+      if (responseData?.code !== 200) {
+        setErrorMsg((responseData?.msg as string) || '识别失败，请重试')
+        return
+      }
+      const innerData = responseData?.data as Record<string, unknown> | undefined
+      const wordsData = (innerData?.words || responseData?.words) as Array<{ word: string; meanings: string[] }> | undefined
+      if (wordsData && Array.isArray(wordsData) && wordsData.length > 0) {
+        const wordItems: WordItem[] = wordsData.map(w => ({
+          word: w.word,
+          meanings: w.meanings || [],
+          date: new Date().toISOString().split('T')[0]
+        }))
+        setWords(wordItems)
+        Taro.setStorageSync('new_vocabulary', JSON.stringify(wordItems))
+        Taro.showToast({ title: `识别到 ${wordItems.length} 个单词`, icon: 'success' })
+      } else {
+        const raw = innerData?.raw as string | undefined
+        setErrorMsg('未识别到单词，请确认图片清晰且包含英文单词' + (raw ? `（LLM返回：${raw.substring(0, 100)}）` : ''))
+      }
+    } catch (err) {
+      console.error('识别失败:', err)
+      setErrorMsg('网络请求失败，请检查后端服务')
+    } finally {
+      setIsRecognizing(false)
     }
-    const audioCtx = Taro.createInnerAudioContext()
-    audioCtx.src = url
-    audioCtx.autoplay = true
-    const timeout = setTimeout(() => {
-      audioCtx.destroy()
-      Taro.showToast({ title: '播放超时', icon: 'none' })
-      reject(new Error('播放超时'))
-    }, 10000)
-    audioCtx.onEnded(() => { clearTimeout(timeout); audioCtx.destroy(); resolve() })
-    audioCtx.onError((err) => {
-      clearTimeout(timeout)
-      audioCtx.destroy()
-      Taro.showToast({ title: '发音加载失败', icon: 'none' })
-      reject(err)
-    })
-  })
-}
-```
-
-### 2. playWord（增加超时和错误捕获）
-
-```typescript
-const playWord = useCallback(async (word: string) => {
-  try {
-    const res = await Network.request({
-      url: '/api/dictation/speak-word-both',
-      method: 'POST',
-      data: { word },
-      timeout: 15000, // Fix 第五版
-    })
-    await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
-    await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
-  } catch (err) {
-    Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
   }
-}, [])
-```
 
-### 3. checkMeaning（处理 undefined）
+  const goToDictation = () => {
+    if (words.length === 0) { setErrorMsg('请先识别单词'); return }
+    Taro.navigateTo({ url: '/pages/dictation/index?type=new' })
+  }
 
-```typescript
-const checkMeaning = useCallback((correctMeanings: string[] | undefined, userAnswer: string): boolean => {
-  if (!correctMeanings || correctMeanings.length === 0) return false
-  // ... 比对逻辑
-}, [])
-```
+  return (
+    <View className="flex flex-col h-screen bg-gray-50">
+      <View className="bg-blue-500 pt-12 pb-6 px-6 rounded-b-3xl">
+        <Text className="block text-white text-xl font-bold mb-1">上传单词照片</Text>
+        <Text className="block text-blue-100 text-sm">拍摄或选择包含单词的照片</Text>
+      </View>
 
-### 4. handleMeaningWrong（防止显示 undefined）
+      <View className="flex-1 px-4 py-4">
+        {/* 上传区域 */}
+        {!imageUrl ? (
+          <Card className="mb-4">
+            <CardContent className="p-8 flex flex-col items-center">
+              <Camera size={48} color="#9ca3af" className="mb-4" />
+              <Text className="block text-gray-500 mb-4">请选择包含单词的照片</Text>
+              <Button className="bg-blue-500 text-white rounded-xl px-8 py-3" onClick={handleChooseImage}>
+                选择照片
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="mb-4">
+            <CardContent className="p-4">
+              <View className="relative">
+                <ImageUp size={24} color="#3b82f6" className="mb-2" />
+                <Text className="block text-sm text-gray-500 mb-2">已上传照片</Text>
+                <Button variant="outline" size="sm" onClick={handleChooseImage}>重新选择</Button>
+              </View>
+            </CardContent>
+          </Card>
+        )}
 
-```typescript
-const meaningsDisplay = currentWord?.meanings && currentWord.meanings.length > 0 
-  ? currentWord.meanings.join(' / ') 
-  : '(暂无含义)'
-setFeedbackMsg(`错误！正确含义: ${meaningsDisplay}`)
-```
+        {/* 识别按钮 */}
+        {imageUrl && (
+          <Button
+            className="w-full bg-green-500 text-white rounded-xl py-3 mb-4"
+            onClick={handleRecognize}
+            disabled={isRecognizing}
+          >
+            {isRecognizing ? (
+              <View className="flex flex-row items-center justify-center gap-2">
+                <Loader size={18} color="#fff" />
+                <Text className="block text-white">识别中...</Text>
+              </View>
+            ) : '识别单词'}
+          </Button>
+        )}
+
+        {/* 错误提示 */}
+        {errorMsg && (
+          <View className="bg-red-50 rounded-xl p-3 mb-4">
+            <Text className="block text-red-500 text-sm">{errorMsg}</Text>
+          </View>
+        )}
+
+        {/* 识别结果 */}
+        {words.length > 0 && (
+          <>
+            <Card className="mb-4">
+              <CardContent className="p-4">
+                <View className="flex flex-row items-center gap-2 mb-3">
+                  <Check size={20} color="#22c55e" />
+                  <Text className="block text-lg font-semibold">识别到 {words.length} 个单词</Text>
+                </View>
+                <View className="flex flex-wrap gap-2">
+                  {words.map((w, i) => (
+                    <View key={i} className="bg-blue-50 rounded-lg px-3 py-1">
+                      <Text className="block text-blue-700 text-sm">{w.word}</Text>
+                    </View>
+                  ))}
+                </View>
+              </CardContent>
+            </Card>
+            <Button className="w-full bg-blue-500 text-white rounded-xl py-3" onClick={goToDictation}>
+              开始听写
+            </Button>
+          </>
+        )}
+      </View>
+    </View>
+  )
+}
 
 ============================================
-程序结束
+## 文件三：src/pages/dictation/index.tsx（听写流程页）
+============================================
+
+完整代码见 /workspace/projects/src/pages/dictation/index.tsx（文件较大，756行）
+
+关键修复点：
+- Fix 第六版: playAudioUrl 增加详细日志和 onPlay 回调
+- Fix 第六版: 录音按钮改为点击切换模式
+- Fix 第六版: 拼写阶段增加"不知道"按钮
+- Fix 第六版: handleDontKnow 增加空值检查
+- Fix Bug 4: checkMeaning 使用 trim/toLowerCase/标点去除
+- Fix Bug 5: Canvas 手写板使用 Canvas 2D API
+- Fix: 统一存储格式 loadWordsFromStorage
+
+============================================
+## 文件四：src/pages/vocabulary/index.tsx（词库管理页）
+============================================
+
+import { useState, useEffect } from 'react'
+import { View, Text } from '@tarojs/components'
+import Taro from '@tarojs/taro'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Plus, Trash2, Save, Clock } from 'lucide-react-taro'
+
+interface WordItem {
+  word: string
+  meanings: string[]
+  date: string
+}
+
+// Fix: 统一存储格式辅助函数
+const loadFromStorage = (key: string): WordItem[] => {
+  const raw = Taro.getStorageSync(key)
+  if (!raw) return []
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return [] }
+}
+const saveToStorage = (key: string, data: WordItem[]) => {
+  Taro.setStorageSync(key, JSON.stringify(data))
+}
+
+export default function VocabularyPage() {
+  const [activeTab, setActiveTab] = useState('new')
+  const [newWords, setNewWords] = useState<WordItem[]>([])
+  const [reviewWords, setReviewWords] = useState<WordItem[]>([])
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [addWord, setAddWord] = useState('')
+  const [addMeaning, setAddMeaning] = useState('')
+  const [editingIndex, setEditingIndex] = useState(-1)
+  const [editWord, setEditWord] = useState('')
+  const [editMeaning, setEditMeaning] = useState('')
+
+  useEffect(() => {
+    setNewWords(loadFromStorage('new_vocabulary'))
+    setReviewWords(loadFromStorage('review_vocabulary'))
+  }, [])
+
+  const currentWords = activeTab === 'new' ? newWords : reviewWords
+  const setCurrentWords = (words: WordItem[]) => {
+    const key = activeTab === 'new' ? 'new_vocabulary' : 'review_vocabulary'
+    if (activeTab === 'new') setNewWords(words)
+    else setReviewWords(words)
+    saveToStorage(key, words)
+  }
+
+  const handleAdd = () => {
+    if (!addWord.trim() || !addMeaning.trim()) return
+    const newItem: WordItem = { word: addWord.trim(), meanings: [addMeaning.trim()], date: new Date().toISOString().split('T')[0] }
+    setCurrentWords([...currentWords, newItem])
+    setAddWord(''); setAddMeaning(''); setShowAddForm(false)
+  }
+
+  const handleDelete = (index: number) => {
+    const updated = currentWords.filter((_, i) => i !== index)
+    setCurrentWords(updated)
+  }
+
+  const handleStartEdit = (index: number) => {
+    setEditingIndex(index)
+    setEditWord(currentWords[index].word)
+    setEditMeaning(currentWords[index].meanings.join(' / '))
+  }
+
+  const handleSaveEdit = () => {
+    if (editingIndex < 0) return
+    const updated = [...currentWords]
+    updated[editingIndex] = { word: editWord.trim(), meanings: [editMeaning.trim()], date: updated[editingIndex].date }
+    setCurrentWords(updated)
+    setEditingIndex(-1)
+  }
+
+  return (
+    <View className="flex flex-col h-screen bg-gray-50">
+      <View className="bg-blue-500 pt-12 pb-6 px-6 rounded-b-3xl">
+        <Text className="block text-white text-xl font-bold mb-1">词库管理</Text>
+        <Text className="block text-blue-100 text-sm">手动管理新单词和复习词库</Text>
+      </View>
+
+      <View className="flex-1 px-4 py-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-4">
+          <TabsList className="w-full">
+            <TabsTrigger value="new" className="flex-1">新单词</TabsTrigger>
+            <TabsTrigger value="review" className="flex-1">复习</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <Button className="w-full bg-blue-500 text-white rounded-xl py-3 mb-4" onClick={() => setShowAddForm(true)}>
+          <Plus size={18} color="#fff" /> 添加单词
+        </Button>
+
+        {showAddForm && (
+          <Card className="mb-4">
+            <CardContent className="p-4">
+              <View className="mb-3">
+                <Input className="bg-gray-50 rounded-xl border-gray-200" placeholder="英文单词/短语" value={addWord} onInput={(e) => setAddWord(e.detail.value)} />
+              </View>
+              <View className="mb-3">
+                <Input className="bg-gray-50 rounded-xl border-gray-200" placeholder="中文含义" value={addMeaning} onInput={(e) => setAddMeaning(e.detail.value)} />
+              </View>
+              <View className="flex flex-row gap-2">
+                <Button className="flex-1 bg-green-500 text-white rounded-xl py-2" onClick={handleAdd}><Save size={16} color="#fff" /> 保存</Button>
+                <Button className="flex-1 bg-gray-300 text-gray-700 rounded-xl py-2" onClick={() => setShowAddForm(false)}>取消</Button>
+              </View>
+            </CardContent>
+          </Card>
+        )}
+
+        {currentWords.length === 0 ? (
+          <View className="flex flex-col items-center justify-center py-12">
+            <Text className="block text-gray-400 text-lg">词库为空</Text>
+            <Text className="block text-gray-300 text-sm mt-1">点击上方按钮添加单词</Text>
+          </View>
+        ) : (
+          currentWords.map((item, index) => (
+            <Card key={index} className="mb-3">
+              <CardContent className="p-4">
+                {editingIndex === index ? (
+                  <View>
+                    <Input className="bg-gray-50 rounded-xl border-gray-200 mb-2" value={editWord} onInput={(e) => setEditWord(e.detail.value)} />
+                    <Input className="bg-gray-50 rounded-xl border-gray-200 mb-3" value={editMeaning} onInput={(e) => setEditMeaning(e.detail.value)} />
+                    <View className="flex flex-row gap-2">
+                      <Button size="sm" className="bg-green-500 text-white" onClick={handleSaveEdit}><Save size={14} color="#fff" /> 保存</Button>
+                      <Button size="sm" variant="outline" onClick={() => setEditingIndex(-1)}>取消</Button>
+                    </View>
+                  </View>
+                ) : (
+                  <View>
+                    <View className="flex flex-row items-center justify-between mb-1">
+                      <Text className="block text-lg font-semibold">{item.word}</Text>
+                      <View className="flex flex-row gap-2">
+                        <Button size="sm" variant="outline" onClick={() => handleStartEdit(index)}>编辑</Button>
+                        <Button size="sm" variant="outline" onClick={() => handleDelete(index)}><Trash2 size={14} color="#ef4444" /></Button>
+                      </View>
+                    </View>
+                    <Text className="block text-gray-500 text-sm">{item.meanings.join(' / ')}</Text>
+                    <View className="flex flex-row items-center gap-1 mt-1">
+                      <Clock size={12} color="#9ca3af" />
+                      <Text className="block text-gray-300 text-xs">{item.date}</Text>
+                    </View>
+                  </View>
+                )}
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </View>
+    </View>
+  )
+}
+
+============================================
+## 文件五：server/src/dictation/dictation.controller.ts（后端API）
+============================================
+
+完整代码见 /workspace/projects/server/src/dictation/dictation.controller.ts（约400行）
+
+关键修复点：
+- Fix 第四版: cleanWord 统一清洗函数（只提取纯英文）
+- Fix 第五版: speakWordBoth 下载TTS音频上传到自己的存储
+- Fix 第五版: translateWord 空值保护
+- Fix 第六版: recognizeAllWords 增强prompt
+
+============================================
+## 文件六：src/app.config.ts（路由配置）
+============================================
+
+export default defineAppConfig({
+  pages: [
+    'pages/index/index',
+    'pages/upload/index',
+    'pages/dictation/index',
+    'pages/vocabulary/index',
+  ],
+  window: {
+    navigationBarTitleText: '单词听写',
+    navigationBarBackgroundColor: '#3b82f6',
+    navigationBarTextStyle: 'white',
+  },
+})
+
+============================================
+程序文档结束
 ============================================

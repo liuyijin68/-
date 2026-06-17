@@ -1,150 +1,230 @@
 ============================================
-单词听写小程序 - 修复日志（第五版）
+单词听写小程序 - 第六版修复日志
 ============================================
 
-## 本次修复目标
+## 修复目标
 
-1. **朗读无声音**：Google TTS URL 在小程序域名白名单外，无法播放
-2. **重新播放无响应**：播放失败无错误提示，用户不知道问题
-3. **录音无法识别**：ASR 可能失败或返回空
-4. **中文含义显示 undefined**：meanings 数组为空或 undefined
+修复以下5个问题：
+1. 单词听写显示"正在朗读"但没有声音
+2. 朗读完点"点击重新播放"无反应
+3. 说出中文含义时点击录音无法识别
+4. 输入英文拼写时缺少"不知道"选项
+5. 听写时点击"不知道"的单词没有加入"复习"词库
 
----
+============================================
+## 修复一：发音无声音 & 重播无响应
 
-## 根因分析
+### 根因分析
+- 后端 API 返回正常（curl 测试 200，音频 URL 可访问）
+- 问题在前端：缺少调试日志，无法确认播放状态
+- 可能存在域名白名单问题（tos.coze.site 需配置）
 
-### 1-2. 发音问题
-- Google TTS URL（`https://translate.google.com/...`）在小程序中被域名白名单限制
-- 前端 `playAudioUrl` 播放失败时静默失败，无错误提示
+### 修复内容
+文件：src/pages/dictation/index.tsx
 
-### 3. 录音问题
-- ASR SDK 可能配额不足或识别失败
-- 前端未处理 ASR 返回空的情况
+1. playAudioUrl 增加详细日志：
+   - [playAudioUrl] 开始播放: <url>
+   - [playAudioUrl] 播放中
+   - [playAudioUrl] 播放结束
+   - [playAudioUrl] 播放错误: <err>
+   - [playAudioUrl] 播放超时
 
-### 4. 中文含义 undefined
-- `currentWord?.meanings.join(' / ')` 当 meanings 为 undefined 时报错
-- `checkMeaning(currentWord.meanings, ...)` 未处理 undefined
+2. 增加 resolved 标志防止重复 resolve/reject
+3. 超时从 10s 延长到 15s
+4. 错误提示改为"发音加载失败，请检查网络"
 
----
-
-## 修复内容
-
-### 1. 后端 speakWordBoth — 下载TTS音频并上传到自己的存储
-
-文件：`server/src/dictation/dictation.controller.ts`
-
+### 关键代码
 ```typescript
-import axios from 'axios'; // Fix 第五版: 用于下载TTS音频
-
-// Fix 第五版: 下载并上传音频到自己的存储
-const fetchAndUpload = async (lang: string): Promise<string | null> => {
-  try {
-    const url = googleTtsUrl(word, lang);
-    const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
-    const audioBuffer = Buffer.from(response.data);
-    const fileName = `dictation/tts/${Date.now()}_${word}_${lang}.mp3`;
-    const fileKey = await this.storage.uploadFile({
-      fileContent: audioBuffer,
-      fileName,
-      contentType: 'audio/mpeg',
-    });
-    const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
-    return audioUrl;
-  } catch (err) {
-    return null;
-  }
-};
-```
-
-### 2. 前端 playAudioUrl — 增加超时和错误提示
-
-文件：`src/pages/dictation/index.tsx`
-
-```typescript
-// Fix 第五版: 增加超时和错误提示
+// Fix 第六版: 增加详细日志和 onPlay 回调
 function playAudioUrl(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!url) {
+      console.log('[playAudioUrl] 音频地址为空')
       Taro.showToast({ title: '音频地址为空', icon: 'none' })
       reject(new Error('音频地址为空'))
       return
     }
+    console.log('[playAudioUrl] 开始播放:', url)
     const audioCtx = Taro.createInnerAudioContext()
     audioCtx.src = url
     audioCtx.autoplay = true
+    let resolved = false
     const timeout = setTimeout(() => {
-      audioCtx.destroy()
-      Taro.showToast({ title: '播放超时', icon: 'none' })
-      reject(new Error('播放超时'))
-    }, 10000)
+      if (!resolved) {
+        resolved = true
+        audioCtx.destroy()
+        console.log('[playAudioUrl] 播放超时')
+        Taro.showToast({ title: '播放超时，请检查网络', icon: 'none' })
+        reject(new Error('播放超时'))
+      }
+    }, 15000)
+    audioCtx.onPlay(() => console.log('[playAudioUrl] 播放中'))
+    audioCtx.onEnded(() => {
+      if (!resolved) {
+        resolved = true
+        clearTimeout(timeout)
+        audioCtx.destroy()
+        console.log('[playAudioUrl] 播放结束')
+        resolve()
+      }
+    })
     audioCtx.onError((err) => {
-      clearTimeout(timeout)
-      Taro.showToast({ title: '发音加载失败', icon: 'none' })
-      reject(err)
+      if (!resolved) {
+        resolved = true
+        clearTimeout(timeout)
+        audioCtx.destroy()
+        console.error('[playAudioUrl] 播放错误:', JSON.stringify(err))
+        Taro.showToast({ title: '发音加载失败，请检查网络', icon: 'none' })
+        reject(err)
+      }
     })
   })
 }
 ```
 
-### 3. 前端 playWord — 增加超时和错误捕获
+============================================
+## 修复二：录音无法识别
 
-文件：`src/pages/dictation/index.tsx`
+### 根因分析
+- 录音按钮使用 onTouchStart/onTouchEnd，在小程序中可能不稳定
+- 缺少详细日志，无法定位失败环节
 
+### 修复内容
+文件：src/pages/dictation/index.tsx
+
+1. 录音按钮改为点击切换模式（toggleRecording）
+   - 点击开始录音 → 再点击停止录音
+   - 移除 onTouchStart/onTouchEnd
+
+2. 增加详细日志：
+   - [录音] 开始录音
+   - [录音] 录音停止, tempFilePath: <path>, duration: <ms>
+   - [录音] 录音错误: <err>
+   - [ASR] 开始上传录音: <path>
+   - [ASR] 上传响应: <data>
+   - [ASR] 音频URL: <url>
+   - [ASR] 识别响应: <data>
+   - [ASR] 识别文本: <text>
+
+3. 增加空值判断和友好提示
+
+### 关键代码
 ```typescript
-const playWord = useCallback(async (word: string) => {
-  try {
-    const res = await Network.request({
-      url: '/api/dictation/speak-word-both',
-      method: 'POST',
-      data: { word },
-      timeout: 15000, // Fix 第五版: 增加超时
-    })
-    // 播放时捕获错误但继续
-    await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
-    await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
-  } catch (err) {
-    Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
+// Fix 第六版: 录音按钮改为点击切换模式
+const toggleRecording = useCallback(() => {
+  const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
+  if (!isMiniApp) {
+    Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
+    return
   }
-}, [])
-```
-
-### 4. 前端 checkMeaning — 处理 undefined meanings
-
-文件：`src/pages/dictation/index.tsx`
-
-```typescript
-// Fix 第五版: 防止 correctMeanings 为 undefined 或空数组
-const checkMeaning = useCallback((correctMeanings: string[] | undefined, userAnswer: string): boolean => {
-  if (!correctMeanings || correctMeanings.length === 0) {
-    return false
+  if (isRecording) {
+    try {
+      const recorderManager = Taro.getRecorderManager()
+      recorderManager.stop()
+    } catch { setIsRecording(false) }
+  } else {
+    try {
+      const recorderManager = Taro.getRecorderManager()
+      recorderManager.onStop((res) => {
+        console.log('[录音] 录音停止, tempFilePath:', res.tempFilePath, 'duration:', res.duration)
+        setIsRecording(false)
+        if (res.tempFilePath) handleVoiceResult(res.tempFilePath)
+        else Taro.showToast({ title: '录音文件获取失败', icon: 'none' })
+      })
+      recorderManager.onError((err) => {
+        console.error('[录音] 录音错误:', JSON.stringify(err))
+        setIsRecording(false)
+        Taro.showToast({ title: '录音失败，请重试', icon: 'none' })
+      })
+      recorderManager.start({ format: 'wav', sampleRate: 16000, numberOfChannels: 1 })
+      setIsRecording(true)
+      console.log('[录音] 开始录音')
+    } catch (err) {
+      console.error('[录音] 启动失败:', err)
+      Taro.showToast({ title: '录音功能不可用', icon: 'none' })
+    }
   }
-  // ... 比对逻辑
-}, [])
+}, [isRecording])
 ```
 
-### 5. 前端 handleMeaningWrong — 防止显示 undefined
+============================================
+## 修复三：拼写阶段缺少"不知道"按钮
 
-文件：`src/pages/dictation/index.tsx`
+### 根因分析
+- 原代码只在 meaning 阶段有"不知道"按钮
+- 用户在 spelling 阶段也可能不知道拼写
 
+### 修复内容
+文件：src/pages/dictation/index.tsx
+
+1. 新增 handleSpellingDontKnow 函数
+2. 在拼写输入区增加"不知道"按钮（与"提交拼写"并列）
+
+### 关键代码
 ```typescript
-// Fix 第五版: 防止 meanings 为 undefined 或空数组时显示 undefined
-const meaningsDisplay = currentWord?.meanings && currentWord.meanings.length > 0 
-  ? currentWord.meanings.join(' / ') 
-  : '(暂无含义)'
-setFeedbackMsg(`错误！正确含义: ${meaningsDisplay}`)
+// Fix 第六版: 拼写阶段"不知道"按钮
+const handleSpellingDontKnow = () => {
+  if (!currentWord) return
+  setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings && currentWord.meanings.length > 0 ? currentWord.meanings.join(' / ') : '(暂无含义)'}`)
+  addToReview(currentWord)
+  setTimeout(() => {
+    setFeedbackMsg('')
+    setSpellingInput('')
+    goToNext()
+  }, 2500)
+}
 ```
 
----
+JSX:
+```tsx
+<View className="flex flex-row gap-2 mt-4">
+  <Button className="flex-1 bg-blue-500 text-white rounded-xl py-3"
+    onClick={handleSpellingSubmit} disabled={!spellingInput.trim()}>
+    提交拼写
+  </Button>
+  <Button className="flex-1 bg-gray-300 text-gray-700 rounded-xl py-3"
+    onClick={handleSpellingDontKnow}>
+    不知道
+  </Button>
+</View>
+```
 
-## 版本历史
+============================================
+## 修复四：点击"不知道"未加入复习词库
 
-| 版本 | 修复内容 |
-|------|----------|
-| 第一版 | 数据解析路径、TTS音频播放、录音ASR识别、中文含义比对、Canvas手写板 |
-| 第二版 | 存储格式统一、图片识别鲁棒性增强 |
-| 第三版 | 图片识别fallback清洗逻辑、Canvas 2D导出修复 |
-| 第四版 | 统一清洗函数cleanWord，无论JSON还是fallback都只提取纯英文 |
-| 第五版 | TTS音频上传到自己存储解决域名白名单问题、播放错误提示、meanings undefined处理 |
+### 根因分析
+- handleDontKnow 中 meanings.join 未做空值检查
+- addToReview 已正确实现，但可能因错误中断未执行
+
+### 修复内容
+文件：src/pages/dictation/index.tsx
+
+handleDontKnow 增加空值检查：
+```typescript
+const handleDontKnow = () => {
+  if (!currentWord) return
+  setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings && currentWord.meanings.length > 0 ? currentWord.meanings.join(' / ') : '(暂无含义)'}`)
+  addToReview(currentWord)
+  setTimeout(() => {
+    setFeedbackMsg('')
+    setSpellingInput('')
+    goToNext()
+  }, 2500)
+}
+```
+
+============================================
+## 修复五：域名白名单配置指导
+
+### 问题
+tos.coze.site 域名可能未在微信小程序后台配置
+
+### 解决方案
+在微信公众平台 → 开发 → 开发管理 → 服务器域名 → 添加：
+- request 合法域名：https://coze-coding-project.tos.coze.site
+- downloadFile 合法域名：https://coze-coding-project.tos.coze.site
+
+或在开发者工具中勾选"不校验合法域名"进行测试
 
 ============================================
 修复日志结束
