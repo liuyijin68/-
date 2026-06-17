@@ -1,0 +1,153 @@
+============================================
+单词听写小程序 - 诊断日志
+============================================
+
+## 一、服务状态
+
+✅ 服务正常运行
+- 前端: http://localhost:5000/
+- 后端: http://localhost:3000/
+
+============================================
+## 二、API 测试结果
+
+### speak-word-both 测试
+
+**测试1: 单词 "important"**
+
+请求:
+```bash
+curl -X POST http://localhost:3000/api/dictation/speak-word-both \
+  -H "Content-Type: application/json" -d '{"word":"important"}'
+```
+
+响应:
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "usAudioUrl": "https://coze-coding-project.tos.coze.site/coze_storage_7648623702988423202/audio/tts_d1d04e47-0d32-40b5-b6d0-01fc76ccc86a.mp3?sign=1813225067-5c1832678e-0-db5f5953fa8fd6cc48407e13fb6ae8ffc0589e1c86f5a7407479c896b6893456",
+    "ukAudioUrl": "https://coze-coding-project.tos.coze.site/coze_storage_7648623702988423202/audio/tts_d1d04e47-0d32-40b5-b6d0-01fc76ccc86a.mp3?sign=1813225067-5c1832678e-0-db5f5953fa8fd6cc48407e13fb6ae8ffc0589e1c86f5a7407479c896b6893456"
+  }
+}
+```
+
+**测试2: 单词 "put up"**
+
+请求:
+```bash
+curl -X POST http://localhost:3000/api/dictation/speak-word-both \
+  -H "Content-Type: application/json" -d '{"word":"put up"}'
+```
+
+响应:
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "usAudioUrl": "https://coze-coding-project.tos.coze.site/coze_storage_7648623702988423202/audio/tts_247c980d-7a62-4650-8e6e-825eb1c2d038.mp3?sign=1813225067-74b3d018de-0-37254815ba41708b51cf1a146ccaeab13e3fbb7a612232a35f47b5dbb90e5098",
+    "ukAudioUrl": "https://coze-coding-project.tos.coze.site/coze_storage_7648623702988423202/audio/tts_247c980d-7a62-4650-8e6e-825eb1c2d038.mp3?sign=1813225067-74b3d018de-0-37254815ba41708b51cf1a146ccaeab13e3fbb7a612232a35f47b5dbb90e5098"
+  }
+}
+```
+
+============================================
+## 三、音频 URL 可访问性测试
+
+请求:
+```bash
+curl -I "https://coze-coding-project.tos.coze.site/coze_storage_7648623702988423202/audio/tts_d1d04e47-0d32-40b5-b6d0-01fc76ccc86a.mp3?sign=..."
+```
+
+响应:
+```
+HTTP/1.1 200 OK
+Server: Byte-nginx
+Content-Type: audio/mpeg
+Content-Length: 11757
+Accept-Ranges: bytes
+```
+
+✅ 音频文件存在，可正常访问
+
+============================================
+## 四、后端详细日志
+
+```
+[speak-word-both] word: important
+[speak-word-both] fetching TTS for en: https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=important
+[speak-word-both] TTS download failed for en: timeout of 8000ms exceeded  ⚠️ Google TTS 超时
+
+[speak-word-both] fetching TTS for en-GB: https://translate.google.com/translate_tts?ie=UTF-8&tl=en-GB&client=tw-ob&q=important
+[speak-word-both] TTS download failed for en-GB: timeout of 8000ms exceeded  ⚠️ Google TTS 超时
+
+[speak-word-both] TTS SDK US: https://coze-coding-project.tos.coze.site/...tts_d1d04e47.mp3  ✅ TTS SDK 回退成功
+
+[speak-word-both] word: put up
+[speak-word-both] fetching TTS for en: https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=put%20up
+[speak-word-both] TTS download failed for en: timeout of 8000ms exceeded  ⚠️ Google TTS 超时
+
+[speak-word-both] fetching TTS for en-GB: https://translate.google.com/translate_tts?ie=UTF-8&tl=en-GB&client=tw-ob&q=put%20up
+[speak-word-both] TTS download failed for en-GB: timeout of 8000ms exceeded  ⚠️ Google TTS 超时
+
+[speak-word-both] TTS SDK US: https://coze-coding-project.tos.coze.site/...tts_247c980d.mp3  ✅ TTS SDK 回退成功
+```
+
+============================================
+## 五、问题诊断结论
+
+### 发现的问题
+
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| Google TTS 下载 | ❌ 超时 | 服务器无法访问 Google TTS（超时 8秒） |
+| TTS SDK 回退 | ✅ 正常 | 使用 coze-coding-dev-sdk TTS 成功 |
+| 音频 URL 生成 | ✅ 正常 | 返回有效的 TOS presigned URL |
+| 音频文件可访问 | ✅ 正常 | HTTP 200, Content-Type: audio/mpeg |
+
+### 根因分析
+
+**朗读无声音的可能原因：**
+
+1. **小程序域名白名单问题**
+   - 当前返回的 URL: `https://coze-coding-project.tos.coze.site`
+   - 需要在小程序后台配置合法域名
+   - 操作路径: 微信小程序后台 → 开发 → 开发管理 → 服务器域名 → 添加 `tos.coze.site`
+
+2. **Taro.createInnerAudioContext 在某些环境不生效**
+   - H5 环境可能需要不同处理
+   - 小程序环境需要确认音频格式兼容性（当前是 mp3）
+
+3. **音频播放时机问题**
+   - 需要在用户交互后才能自动播放
+   - 建议在 `onReady` 或用户点击后再触发
+
+============================================
+## 六、建议修复方案
+
+### 方案 A: 配置小程序域名白名单
+
+在微信小程序后台添加合法域名:
+- `https://coze-coding-project.tos.coze.site`
+
+### 方案 B: 增加前端调试日志
+
+在前端 playAudioUrl 中添加:
+```typescript
+console.log('[playAudioUrl] url:', url)
+audioCtx.onPlay(() => console.log('[playAudioUrl] 开始播放'))
+audioCtx.onEnded(() => console.log('[playAudioUrl] 播放结束'))
+audioCtx.onError((err) => console.error('[playAudioUrl] 错误:', err))
+```
+
+### 方案 C: 使用备用音频源
+
+如果 TOS URL 在小程序不可访问，可以:
+- 使用有道的发音 API: `https://dict.youdao.com/dictvoice?audio=word&type=1`
+- 使用百度发音 API
+
+============================================
+诊断日志结束
+============================================
