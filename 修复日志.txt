@@ -1,47 +1,48 @@
 ============================================
-隐私保护配置完成
+第七版修复日志
 ============================================
 
-## 已完成的操作
+## 修复目标
 
-### 1. app.config.ts - 隐私声明配置
-- 设置 `__usePrivacy__: true`（启用隐私接口授权）
-- 声明 `permission` 权限说明（相机、录音、相册）
+修复3个老问题：
+1. 中文含义输入阶段从录音改为手动输入+手写识别
+2. 拼写阶段不应显示英文单词（听写不是照抄）
+3. 首页"复习"按钮显示"复习词库为空"，但实际有单词
 
-### 2. private-auth.ts - 隐私授权工具（新增）
-- `requestPrivacyAuthorize()` - 调用 `wx.requirePrivacyAuthorize` 请求隐私授权
-- `requestImageAuthorize()` - 相机/相册授权，用户拒绝时引导去设置
-- `requestRecordAuthorize()` - 录音授权，用户拒绝时引导去设置
+## 修复内容
 
-### 3. types/wx.d.ts - 微信全局类型声明（新增）
-- 声明 wx 对象类型（requirePrivacyAuthorize、authorize、showModal、openSetting）
+### 问题1：录音无法识别 → 改为手动输入+手写
 
-### 4. upload/index.tsx - 隐私授权集成
-- 选择图片前调用 `wx.requirePrivacyAuthorize` 请求隐私授权
+**修改文件**：`src/pages/dictation/index.tsx`
 
-### 5. dictation/index.tsx - 隐私授权集成
-- 录音前调用 `wx.requirePrivacyAuthorize` 请求隐私授权
+**改动**：
+1. 新增状态 `meaningInput`（含义输入框内容）
+2. 删除 `isRecording` 状态和 `Mic` 图标导入
+3. 删除录音相关代码（toggleRecording、handleVoiceResult 函数）
+4. 新增 `handleMeaningSubmit` 函数（提交中文含义）
+5. 含义阶段 UI 从录音按钮替换为 Input 输入框 + 手写按钮 + 提交/不知道按钮
+6. 手写识别结果根据当前 phase 填入对应输入框（spelling→spellingInput，meaning→meaningInput）
 
-### 6. project.config.json - 项目配置
-- 更新 appid 为 wx7f1274f84634e78d
-- 启用 usePrivacy: true
-- 更新项目名称为"小淘单词听写王"
+### 问题2：拼写阶段显示单词
 
-## 隐私接口使用清单
+**修改文件**：`src/pages/dictation/index.tsx`
 
-| 隐私接口 | 用途 | 配置状态 |
-|---------|------|---------|
-| chooseImage (album) | 从相册选择单词照片 | ✅ __usePrivacy__ + permission |
-| chooseImage (camera) | 拍摄单词照片 | ✅ __usePrivacy__ + permission |
-| RecorderManager | 录音识别中文含义 | ✅ __usePrivacy__ + permission |
-| setStorageSync | 本地存储词库数据 | ✅ 无需额外授权 |
+**改动**：
+- 拼写/含义阶段不再显示 `{currentWord?.word}`
+- 改为显示"第 X 个单词"（灰色提示文字）
 
-## 隐私保护指引说明
+### 问题3：首页复习词库为空
 
-由于小程序开发权限已托管给第三方（Coze平台），隐私保护指引的配置需要：
+**修改文件**：`src/pages/index/index.tsx`
 
-1. **代码层已配置完成**（本次操作）
-2. **提交审核时**，平台会根据代码中的隐私声明自动生成隐私保护指引
-3. 用户无需在 MP 平台手动配置
+**根因**：`loadVocabularyStats` 直接用 `Taro.getStorageSync('key') || []` 取 `.length`，但存储的是 JSON 字符串，不是数组。
 
-若仍需完善，请确认在 Coze 平台提交代码审核时勾选"用户隐私保护指引"相关选项。
+**改动**：
+- 兼容字符串和数组两种格式读取存储
+- 增加 `Array.isArray` 检查防止取 `.length` 报错
+
+## 验证结果
+
+- `pnpm validate` ✅ 通过
+- `pnpm build:web` ✅ 成功
+- `pnpm build:server` ✅ 成功

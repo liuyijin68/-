@@ -22,14 +22,16 @@ const IndexPage = () => {
     loadVocabularyStats();
   });
 
-  // Fix: 统一存储 key
+  // Fix: 统一存储 key，兼容字符串和数组格式
   const loadVocabularyStats = async () => {
     try {
-      const newWords = Taro.getStorageSync('new_vocabulary') || [];
-      const reviewWords = Taro.getStorageSync('review_vocabulary') || [];
+      const newRaw = Taro.getStorageSync('new_vocabulary')
+      const reviewRaw = Taro.getStorageSync('review_vocabulary')
+      const newWords = newRaw ? (typeof newRaw === 'string' ? JSON.parse(newRaw) : newRaw) : []
+      const reviewWords = reviewRaw ? (typeof reviewRaw === 'string' ? JSON.parse(reviewRaw) : reviewRaw) : []
       setStats({
-        newWordsCount: newWords.length,
-        reviewWordsCount: reviewWords.length,
+        newWordsCount: Array.isArray(newWords) ? newWords.length : 0,
+        reviewWordsCount: Array.isArray(reviewWords) ? reviewWords.length : 0,
       });
     } catch (error) {
       console.error('加载词库统计失败:', error);

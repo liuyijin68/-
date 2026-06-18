@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Volume2, Mic, Check, ArrowLeft, Pencil } from 'lucide-react-taro'
+import { Volume2, Check, ArrowLeft, Pencil } from 'lucide-react-taro'
 import './index.css'
 
 interface WordItem {
@@ -93,9 +93,9 @@ export default function DictationPage() {
   const [correctCount, setCorrectCount] = useState(0)
   const [phase, setPhase] = useState<'loading' | 'playing' | 'spelling' | 'meaning' | 'complete'>('loading')
   const [spellingInput, setSpellingInput] = useState('')
+  const [meaningInput, setMeaningInput] = useState('')
   const [spellingResult, setSpellingResult] = useState<'correct' | 'wrong' | ''>('')
   const [meaningResult, setMeaningResult] = useState<'correct' | 'wrong' | ''>('')
-  const [isRecording, setIsRecording] = useState(false)
   const [feedbackMsg, setFeedbackMsg] = useState('')
   const [vocabularyType, setVocabularyType] = useState<'new' | 'review'>('new')
 
@@ -194,123 +194,6 @@ export default function DictationPage() {
     })
   }, [])
 
-  // Fix Bug 3: 录音识别 — 录音 → 上传到存储 → ASR识别
-  // Fix: 微信隐私授权 — 录音前检查隐私授权
-  const toggleRecording = useCallback(async () => {
-    const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
-    if (!isMiniApp) {
-      Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
-      return
-    }
-    // 微信小程序隐私授权
-    if (Taro.getEnv() === Taro.ENV_TYPE.WEAPP && typeof wx !== 'undefined' && wx.requirePrivacyAuthorize) {
-      try {
-        await wx.requirePrivacyAuthorize({})
-      } catch {
-        Taro.showToast({ title: '请先同意隐私协议后再录音', icon: 'none' })
-        return
-      }
-    }
-    if (isRecording) {
-      // 停止录音
-      try {
-        const recorderManager = Taro.getRecorderManager()
-        recorderManager.stop()
-      } catch {
-        setIsRecording(false)
-      }
-    } else {
-      // 开始录音
-      try {
-        const recorderManager = Taro.getRecorderManager()
-        recorderManager.onStop((res) => {
-          console.log('[录音] 录音停止, tempFilePath:', res.tempFilePath, 'duration:', res.duration)
-          setIsRecording(false)
-          if (res.tempFilePath) {
-            handleVoiceResult(res.tempFilePath)
-          } else {
-            Taro.showToast({ title: '录音文件获取失败', icon: 'none' })
-          }
-        })
-        recorderManager.onError((err) => {
-          console.error('[录音] 录音错误:', JSON.stringify(err))
-          setIsRecording(false)
-          Taro.showToast({ title: '录音失败，请重试', icon: 'none' })
-        })
-        recorderManager.start({
-          format: 'wav',
-          sampleRate: 16000,
-          numberOfChannels: 1,
-        })
-        setIsRecording(true)
-        console.log('[录音] 开始录音')
-      } catch (err) {
-        console.error('[录音] 启动失败:', err)
-        Taro.showToast({ title: '录音功能不可用', icon: 'none' })
-      }
-    }
-  }, [isRecording])
-
-  // Fix 第六版: 录音后上传到存储，再调用ASR，增加详细日志
-  const handleVoiceResult = async (tempFilePath: string) => {
-    try {
-      Taro.showLoading({ title: '识别中...' })
-      console.log('[ASR] 开始上传录音:', tempFilePath)
-      // Step 1: 上传录音文件到对象存储
-      const uploadRes = await Network.uploadFile({
-        url: '/api/dictation/upload-audio',
-        filePath: tempFilePath,
-        name: 'audio',
-      })
-      console.log('[ASR] 上传响应:', uploadRes)
-
-      let uploadData: Record<string, unknown> = (typeof uploadRes?.data === 'string' ? JSON.parse(uploadRes.data) : uploadRes?.data) as Record<string, unknown> || {}
-      const innerData = uploadData?.data as Record<string, unknown> | undefined
-      const audioUrl = (innerData?.audioUrl || uploadData?.audioUrl) as string | undefined
-
-      if (!audioUrl) {
-        Taro.hideLoading()
-        console.log('[ASR] 音频上传失败，无audioUrl')
-        Taro.showToast({ title: '音频上传失败', icon: 'none' })
-        return
-      }
-      console.log('[ASR] 音频URL:', audioUrl)
-
-      // Step 2: 调用ASR识别
-      const res = await Network.request({
-        url: '/api/dictation/recognize-speech',
-        method: 'POST',
-        data: { audioUrl },
-        timeout: 10000,
-      })
-      const result = res?.data as Record<string, unknown>
-      console.log('[ASR] 识别响应:', result)
-      Taro.hideLoading()
-
-      if (result?.code !== 200) {
-        Taro.showToast({ title: (result?.msg as string) || '语音识别失败', icon: 'none' })
-        return
-      }
-      const asrData = result?.data as { text: string } | undefined
-      const recognizedText = asrData?.text?.trim()
-      if (!recognizedText) {
-        Taro.showToast({ title: '未识别到语音内容，请大声清晰朗读', icon: 'none' })
-        return
-      }
-      console.log('[ASR] 识别文本:', recognizedText)
-      // Fix Bug 4: 比对中文含义
-      if (currentWord && checkMeaning(currentWord.meanings, recognizedText)) {
-        handleMeaningCorrect()
-      } else {
-        handleMeaningWrong()
-      }
-    } catch (err) {
-      Taro.hideLoading()
-      console.error('[ASR] 识别异常:', err)
-      Taro.showToast({ title: '语音识别失败，请手动输入含义', icon: 'none' })
-    }
-  }
-
   // 检查英文拼写
   const handleSpellingSubmit = () => {
     if (!currentWord) return
@@ -345,6 +228,22 @@ export default function DictationPage() {
       setSpellingInput('')
       goToNext()
     }, 2500)
+  }
+
+  // Fix: 中文含义手动输入提交
+  const handleMeaningSubmit = () => {
+    if (!currentWord) return
+    const trimmed = meaningInput.trim()
+    if (!trimmed) {
+      Taro.showToast({ title: '请输入中文含义', icon: 'none' })
+      return
+    }
+    if (checkMeaning(currentWord.meanings, trimmed)) {
+      handleMeaningCorrect()
+    } else {
+      handleMeaningWrong()
+    }
+    setMeaningInput('')
   }
 
   // Fix Bug 3: 正确时自动继续
@@ -525,7 +424,14 @@ export default function DictationPage() {
           const hwData = result?.data as { text: string } | undefined
           Taro.hideLoading()
           if (result?.code === 200 && hwData?.text) {
-            setSpellingInput(hwData.text.trim())
+            // Fix: 根据当前阶段填入对应输入框
+            if (phase === 'spelling') {
+              setSpellingInput(hwData.text.trim())
+            } else if (phase === 'meaning') {
+              setMeaningInput(hwData.text.trim())
+            } else {
+              setSpellingInput(hwData.text.trim())
+            }
             setShowCanvas(false)
             Taro.showToast({ title: '识别成功', icon: 'success' })
           } else {
@@ -648,7 +554,8 @@ export default function DictationPage() {
                 />
                 <Text className="block text-gray-400 text-sm">点击重新播放</Text>
               </View>
-              <Text className="block text-3xl font-bold text-gray-800 mb-6">{currentWord?.word}</Text>
+              {/* Fix: 听写时不显示单词，只显示"第X个单词" */}
+              <Text className="block text-gray-400 text-lg mb-6">第 {currentIndex + 1} 个单词</Text>
             </>
           )}
         </View>
@@ -699,24 +606,35 @@ export default function DictationPage() {
         {/* 中文含义输入区 */}
         {phase === 'meaning' && (
           <View className="w-full">
-            <Text className="block text-gray-500 text-sm mb-2">请说出中文含义：</Text>
-            <View className="flex flex-row gap-3 justify-center mb-4">
-              {/* Fix 第六版: 录音按钮改为点击切换模式 */}
+            <Text className="block text-gray-500 text-sm mb-2">请输入中文含义：</Text>
+            <View className="flex flex-row gap-2">
+              <View className="flex-1">
+                <Input
+                  className="bg-gray-50 rounded-xl border-gray-200"
+                  placeholder="输入中文含义..."
+                  value={meaningInput}
+                  onInput={(e) => setMeaningInput(e.detail.value)}
+                  focus
+                />
+              </View>
               <Button
-                size="lg"
-                className={`rounded-full w-16 h-16 flex items-center justify-center ${isRecording ? 'bg-red-500' : 'bg-blue-500'}`}
-                onClick={toggleRecording}
+                size="sm"
+                variant="outline"
+                onClick={() => setShowCanvas(true)}
               >
-                <Mic size={28} color="#fff" />
+                <Pencil size={18} color="#666" />
               </Button>
             </View>
-            <Text className="block text-center text-gray-400 text-sm mb-4">
-              {isRecording ? '正在录音...松手停止' : '按住录音，松手识别'}
-            </Text>
-            <View className="flex flex-row gap-2">
+            <View className="flex flex-row gap-2 mt-4">
               <Button
-                variant="outline"
-                className="flex-1"
+                className="flex-1 bg-blue-500 text-white rounded-xl py-3"
+                onClick={handleMeaningSubmit}
+                disabled={!meaningInput.trim()}
+              >
+                提交含义
+              </Button>
+              <Button
+                className="flex-1 bg-gray-300 text-gray-700 rounded-xl py-3"
                 onClick={handleDontKnow}
               >
                 不知道
