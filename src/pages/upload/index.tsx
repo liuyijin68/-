@@ -21,9 +21,18 @@ export default function UploadPage() {
   const [words, setWords] = useState<WordItem[]>([])
   const [errorMsg, setErrorMsg] = useState('')
 
-  // 选择图片
+  // 选择图片（带隐私授权）
   const handleChooseImage = async () => {
     try {
+      // 微信小程序隐私授权：相册/相机
+      if (Taro.getEnv() === Taro.ENV_TYPE.WEAPP && typeof wx !== 'undefined' && wx.requirePrivacyAuthorize) {
+        try {
+          await wx.requirePrivacyAuthorize({})
+        } catch {
+          Taro.showToast({ title: '请先同意隐私协议', icon: 'none' })
+          return
+        }
+      }
       const res = await Taro.chooseImage({
         count: 1,
         sizeType: ['compressed'],

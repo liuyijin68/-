@@ -195,11 +195,21 @@ export default function DictationPage() {
   }, [])
 
   // Fix Bug 3: 录音识别 — 录音 → 上传到存储 → ASR识别
-  const toggleRecording = useCallback(() => {
+  // Fix: 微信隐私授权 — 录音前检查隐私授权
+  const toggleRecording = useCallback(async () => {
     const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
     if (!isMiniApp) {
       Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
       return
+    }
+    // 微信小程序隐私授权
+    if (Taro.getEnv() === Taro.ENV_TYPE.WEAPP && typeof wx !== 'undefined' && wx.requirePrivacyAuthorize) {
+      try {
+        await wx.requirePrivacyAuthorize({})
+      } catch {
+        Taro.showToast({ title: '请先同意隐私协议后再录音', icon: 'none' })
+        return
+      }
     }
     if (isRecording) {
       // 停止录音

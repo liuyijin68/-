@@ -1,231 +1,47 @@
 ============================================
-单词听写小程序 - 第六版修复日志
+隐私保护配置完成
 ============================================
 
-## 修复目标
+## 已完成的操作
 
-修复以下5个问题：
-1. 单词听写显示"正在朗读"但没有声音
-2. 朗读完点"点击重新播放"无反应
-3. 说出中文含义时点击录音无法识别
-4. 输入英文拼写时缺少"不知道"选项
-5. 听写时点击"不知道"的单词没有加入"复习"词库
+### 1. app.config.ts - 隐私声明配置
+- 设置 `__usePrivacy__: true`（启用隐私接口授权）
+- 声明 `permission` 权限说明（相机、录音、相册）
 
-============================================
-## 修复一：发音无声音 & 重播无响应
+### 2. private-auth.ts - 隐私授权工具（新增）
+- `requestPrivacyAuthorize()` - 调用 `wx.requirePrivacyAuthorize` 请求隐私授权
+- `requestImageAuthorize()` - 相机/相册授权，用户拒绝时引导去设置
+- `requestRecordAuthorize()` - 录音授权，用户拒绝时引导去设置
 
-### 根因分析
-- 后端 API 返回正常（curl 测试 200，音频 URL 可访问）
-- 问题在前端：缺少调试日志，无法确认播放状态
-- 可能存在域名白名单问题（tos.coze.site 需配置）
+### 3. types/wx.d.ts - 微信全局类型声明（新增）
+- 声明 wx 对象类型（requirePrivacyAuthorize、authorize、showModal、openSetting）
 
-### 修复内容
-文件：src/pages/dictation/index.tsx
+### 4. upload/index.tsx - 隐私授权集成
+- 选择图片前调用 `wx.requirePrivacyAuthorize` 请求隐私授权
 
-1. playAudioUrl 增加详细日志：
-   - [playAudioUrl] 开始播放: <url>
-   - [playAudioUrl] 播放中
-   - [playAudioUrl] 播放结束
-   - [playAudioUrl] 播放错误: <err>
-   - [playAudioUrl] 播放超时
+### 5. dictation/index.tsx - 隐私授权集成
+- 录音前调用 `wx.requirePrivacyAuthorize` 请求隐私授权
 
-2. 增加 resolved 标志防止重复 resolve/reject
-3. 超时从 10s 延长到 15s
-4. 错误提示改为"发音加载失败，请检查网络"
+### 6. project.config.json - 项目配置
+- 更新 appid 为 wx7f1274f84634e78d
+- 启用 usePrivacy: true
+- 更新项目名称为"小淘单词听写王"
 
-### 关键代码
-```typescript
-// Fix 第六版: 增加详细日志和 onPlay 回调
-function playAudioUrl(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!url) {
-      console.log('[playAudioUrl] 音频地址为空')
-      Taro.showToast({ title: '音频地址为空', icon: 'none' })
-      reject(new Error('音频地址为空'))
-      return
-    }
-    console.log('[playAudioUrl] 开始播放:', url)
-    const audioCtx = Taro.createInnerAudioContext()
-    audioCtx.src = url
-    audioCtx.autoplay = true
-    let resolved = false
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true
-        audioCtx.destroy()
-        console.log('[playAudioUrl] 播放超时')
-        Taro.showToast({ title: '播放超时，请检查网络', icon: 'none' })
-        reject(new Error('播放超时'))
-      }
-    }, 15000)
-    audioCtx.onPlay(() => console.log('[playAudioUrl] 播放中'))
-    audioCtx.onEnded(() => {
-      if (!resolved) {
-        resolved = true
-        clearTimeout(timeout)
-        audioCtx.destroy()
-        console.log('[playAudioUrl] 播放结束')
-        resolve()
-      }
-    })
-    audioCtx.onError((err) => {
-      if (!resolved) {
-        resolved = true
-        clearTimeout(timeout)
-        audioCtx.destroy()
-        console.error('[playAudioUrl] 播放错误:', JSON.stringify(err))
-        Taro.showToast({ title: '发音加载失败，请检查网络', icon: 'none' })
-        reject(err)
-      }
-    })
-  })
-}
-```
+## 隐私接口使用清单
 
-============================================
-## 修复二：录音无法识别
+| 隐私接口 | 用途 | 配置状态 |
+|---------|------|---------|
+| chooseImage (album) | 从相册选择单词照片 | ✅ __usePrivacy__ + permission |
+| chooseImage (camera) | 拍摄单词照片 | ✅ __usePrivacy__ + permission |
+| RecorderManager | 录音识别中文含义 | ✅ __usePrivacy__ + permission |
+| setStorageSync | 本地存储词库数据 | ✅ 无需额外授权 |
 
-### 根因分析
-- 录音按钮使用 onTouchStart/onTouchEnd，在小程序中可能不稳定
-- 缺少详细日志，无法定位失败环节
+## 隐私保护指引说明
 
-### 修复内容
-文件：src/pages/dictation/index.tsx
+由于小程序开发权限已托管给第三方（Coze平台），隐私保护指引的配置需要：
 
-1. 录音按钮改为点击切换模式（toggleRecording）
-   - 点击开始录音 → 再点击停止录音
-   - 移除 onTouchStart/onTouchEnd
+1. **代码层已配置完成**（本次操作）
+2. **提交审核时**，平台会根据代码中的隐私声明自动生成隐私保护指引
+3. 用户无需在 MP 平台手动配置
 
-2. 增加详细日志：
-   - [录音] 开始录音
-   - [录音] 录音停止, tempFilePath: <path>, duration: <ms>
-   - [录音] 录音错误: <err>
-   - [ASR] 开始上传录音: <path>
-   - [ASR] 上传响应: <data>
-   - [ASR] 音频URL: <url>
-   - [ASR] 识别响应: <data>
-   - [ASR] 识别文本: <text>
-
-3. 增加空值判断和友好提示
-
-### 关键代码
-```typescript
-// Fix 第六版: 录音按钮改为点击切换模式
-const toggleRecording = useCallback(() => {
-  const isMiniApp = Taro.getEnv() === Taro.ENV_TYPE.WEAPP || Taro.getEnv() === Taro.ENV_TYPE.TT
-  if (!isMiniApp) {
-    Taro.showToast({ title: '语音识别仅在小程序中可用，请手动输入含义', icon: 'none' })
-    return
-  }
-  if (isRecording) {
-    try {
-      const recorderManager = Taro.getRecorderManager()
-      recorderManager.stop()
-    } catch { setIsRecording(false) }
-  } else {
-    try {
-      const recorderManager = Taro.getRecorderManager()
-      recorderManager.onStop((res) => {
-        console.log('[录音] 录音停止, tempFilePath:', res.tempFilePath, 'duration:', res.duration)
-        setIsRecording(false)
-        if (res.tempFilePath) handleVoiceResult(res.tempFilePath)
-        else Taro.showToast({ title: '录音文件获取失败', icon: 'none' })
-      })
-      recorderManager.onError((err) => {
-        console.error('[录音] 录音错误:', JSON.stringify(err))
-        setIsRecording(false)
-        Taro.showToast({ title: '录音失败，请重试', icon: 'none' })
-      })
-      recorderManager.start({ format: 'wav', sampleRate: 16000, numberOfChannels: 1 })
-      setIsRecording(true)
-      console.log('[录音] 开始录音')
-    } catch (err) {
-      console.error('[录音] 启动失败:', err)
-      Taro.showToast({ title: '录音功能不可用', icon: 'none' })
-    }
-  }
-}, [isRecording])
-```
-
-============================================
-## 修复三：拼写阶段缺少"不知道"按钮
-
-### 根因分析
-- 原代码只在 meaning 阶段有"不知道"按钮
-- 用户在 spelling 阶段也可能不知道拼写
-
-### 修复内容
-文件：src/pages/dictation/index.tsx
-
-1. 新增 handleSpellingDontKnow 函数
-2. 在拼写输入区增加"不知道"按钮（与"提交拼写"并列）
-
-### 关键代码
-```typescript
-// Fix 第六版: 拼写阶段"不知道"按钮
-const handleSpellingDontKnow = () => {
-  if (!currentWord) return
-  setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings && currentWord.meanings.length > 0 ? currentWord.meanings.join(' / ') : '(暂无含义)'}`)
-  addToReview(currentWord)
-  setTimeout(() => {
-    setFeedbackMsg('')
-    setSpellingInput('')
-    goToNext()
-  }, 2500)
-}
-```
-
-JSX:
-```tsx
-<View className="flex flex-row gap-2 mt-4">
-  <Button className="flex-1 bg-blue-500 text-white rounded-xl py-3"
-    onClick={handleSpellingSubmit} disabled={!spellingInput.trim()}>
-    提交拼写
-  </Button>
-  <Button className="flex-1 bg-gray-300 text-gray-700 rounded-xl py-3"
-    onClick={handleSpellingDontKnow}>
-    不知道
-  </Button>
-</View>
-```
-
-============================================
-## 修复四：点击"不知道"未加入复习词库
-
-### 根因分析
-- handleDontKnow 中 meanings.join 未做空值检查
-- addToReview 已正确实现，但可能因错误中断未执行
-
-### 修复内容
-文件：src/pages/dictation/index.tsx
-
-handleDontKnow 增加空值检查：
-```typescript
-const handleDontKnow = () => {
-  if (!currentWord) return
-  setFeedbackMsg(`正确答案: ${currentWord.word} - ${currentWord.meanings && currentWord.meanings.length > 0 ? currentWord.meanings.join(' / ') : '(暂无含义)'}`)
-  addToReview(currentWord)
-  setTimeout(() => {
-    setFeedbackMsg('')
-    setSpellingInput('')
-    goToNext()
-  }, 2500)
-}
-```
-
-============================================
-## 修复五：域名白名单配置指导
-
-### 问题
-tos.coze.site 域名可能未在微信小程序后台配置
-
-### 解决方案
-在微信公众平台 → 开发 → 开发管理 → 服务器域名 → 添加：
-- request 合法域名：https://coze-coding-project.tos.coze.site
-- downloadFile 合法域名：https://coze-coding-project.tos.coze.site
-
-或在开发者工具中勾选"不校验合法域名"进行测试
-
-============================================
-修复日志结束
-============================================
+若仍需完善，请确认在 Coze 平台提交代码审核时勾选"用户隐私保护指引"相关选项。

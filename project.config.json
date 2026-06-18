@@ -1,15 +1,16 @@
 {
   "miniprogramRoot": "./dist",
-  "projectname": "coze-mini-program",
-  "description": "test",
-  "appid": "touristappid",
+  "projectname": "小淘单词听写王",
+  "description": "单词听写小程序 - 拍照识别、语音听写、智能复习",
+  "appid": "wx7f1274f84634e78d",
   "setting": {
     "urlCheck": true,
     "es6": false,
     "enhance": false,
     "compileHotReLoad": false,
     "postcss": false,
-    "minified": false
+    "minified": false,
+    "usePrivacy": true
   },
   "compileType": "miniprogram",
   "packOptions": { "ignore": [{ "type": "folder", "value": "./assets" }] }
