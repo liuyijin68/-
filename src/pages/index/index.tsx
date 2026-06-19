@@ -22,13 +22,22 @@ const IndexPage = () => {
     loadVocabularyStats();
   });
 
+  // Fix 第八版: 统一存储格式辅助函数
+  const loadFromStorage = (key: string): any[] => {
+    const raw = Taro.getStorageSync(key)
+    if (!raw) return []
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw
+    } catch {
+      return []
+    }
+  }
+
   // Fix: 统一存储 key，兼容字符串和数组格式
   const loadVocabularyStats = async () => {
     try {
-      const newRaw = Taro.getStorageSync('new_vocabulary')
-      const reviewRaw = Taro.getStorageSync('review_vocabulary')
-      const newWords = newRaw ? (typeof newRaw === 'string' ? JSON.parse(newRaw) : newRaw) : []
-      const reviewWords = reviewRaw ? (typeof reviewRaw === 'string' ? JSON.parse(reviewRaw) : reviewRaw) : []
+      const newWords = loadFromStorage('new_vocabulary')
+      const reviewWords = loadFromStorage('review_vocabulary')
       setStats({
         newWordsCount: Array.isArray(newWords) ? newWords.length : 0,
         reviewWordsCount: Array.isArray(reviewWords) ? reviewWords.length : 0,

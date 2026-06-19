@@ -1,48 +1,70 @@
 ============================================
-第七版修复日志
+第八版修复日志
 ============================================
 
 ## 修复目标
 
-修复3个老问题：
-1. 中文含义输入阶段从录音改为手动输入+手写识别
-2. 拼写阶段不应显示英文单词（听写不是照抄）
-3. 首页"复习"按钮显示"复习词库为空"，但实际有单词
+修复4个老问题：
+1. 发音获取失败（多次修复无效）
+2. 首页"复习"词库数量不更新
+3. 听写朗读时显示英文单词
+4. 含义阶段提示词"请说出中文含义"未改
 
 ## 修复内容
 
-### 问题1：录音无法识别 → 改为手动输入+手写
+### 问题1：发音获取失败
+
+**根因分析**：
+- Network.ts 使用 `PROJECT_DOMAIN` 全局变量拼接 URL
+- 如果 `PROJECT_DOMAIN` 指向了 localhost 或 127.0.0.1，小程序环境无法访问
+- 之前的修复缺少详细错误日志，无法定位是"请求失败"还是"播放失败"
 
 **修改文件**：`src/pages/dictation/index.tsx`
 
 **改动**：
-1. 新增状态 `meaningInput`（含义输入框内容）
-2. 删除 `isRecording` 状态和 `Mic` 图标导入
-3. 删除录音相关代码（toggleRecording、handleVoiceResult 函数）
-4. 新增 `handleMeaningSubmit` 函数（提交中文含义）
-5. 含义阶段 UI 从录音按钮替换为 Input 输入框 + 手写按钮 + 提交/不知道按钮
-6. 手写识别结果根据当前 phase 填入对应输入框（spelling→spellingInput，meaning→meaningInput）
+- playWord 函数增加详细日志：
+  - 请求前打印 `[playWord] 请求发音: {word}`
+  - 请求后打印 `[playWord] 响应: {完整响应JSON}`
+  - 打印美式和英式音频 URL
+  - 区分错误类型：`request:fail`（后端地址问题）vs 其他错误
+  - 显示具体错误信息给用户
 
-### 问题2：拼写阶段显示单词
-
-**修改文件**：`src/pages/dictation/index.tsx`
-
-**改动**：
-- 拼写/含义阶段不再显示 `{currentWord?.word}`
-- 改为显示"第 X 个单词"（灰色提示文字）
-
-### 问题3：首页复习词库为空
+### 问题2：首页复习词库数量不更新
 
 **修改文件**：`src/pages/index/index.tsx`
 
-**根因**：`loadVocabularyStats` 直接用 `Taro.getStorageSync('key') || []` 取 `.length`，但存储的是 JSON 字符串，不是数组。
+**改动**：
+- 新增 `loadFromStorage` 辅助函数，统一处理 JSON 字符串和数组两种格式
+- `loadVocabularyStats` 使用该辅助函数读取存储
+
+### 问题3：听写朗读时显示英文单词
+
+**修改文件**：`src/pages/dictation/index.tsx`
 
 **改动**：
-- 兼容字符串和数组两种格式读取存储
-- 增加 `Array.isArray` 检查防止取 `.length` 报错
+- playing 阶段删除 `{currentWord?.word}` 显示
+- 只保留"正在朗读单词，请仔细听..."提示
+
+### 问题4：含义阶段提示词
+
+**修改文件**：`src/pages/dictation/index.tsx`
+
+**状态**：已在第七版修改为"请输入中文含义："，无需额外修改。
 
 ## 验证结果
 
 - `pnpm validate` ✅ 通过
 - `pnpm build:web` ✅ 成功
 - `pnpm build:server` ✅ 成功
+
+## 关于发音问题的进一步排查
+
+如果修复后仍无声音，请在微信开发者工具控制台查看以下日志：
+1. `[playWord] 请求发音:` — 确认请求已发出
+2. `[playWord] 响应:` — 确认后端返回了音频 URL
+3. `[playWord] 美式URL:` — 确认 URL 格式正确
+4. `[playAudioUrl] 开始播放:` — 确认前端开始播放
+5. `[playAudioUrl] 播放错误:` — 确认具体播放错误
+
+如果第1步就报错 `request:fail`，说明 PROJECT_DOMAIN 配置有问题。
+如果第4步正常但无声，检查微信小程序后台的合法域名配置。

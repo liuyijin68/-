@@ -138,33 +138,39 @@ export default function DictationPage() {
     }
   }, [])
 
-  // Fix 第五版: 播放单词发音，确保捕获错误后仍然继续
+  // Fix 第八版: 增强错误日志，精确定位发音失败原因
   const playWord = useCallback(async (word: string) => {
     try {
+      console.log('[playWord] 请求发音:', word)
       const res = await Network.request({
         url: '/api/dictation/speak-word-both',
         method: 'POST',
         data: { word },
         timeout: 15000,
       })
+      console.log('[playWord] 响应:', JSON.stringify(res?.data))
       const responseData = res?.data as Record<string, unknown>
       const innerData = responseData?.data as AudioResult | undefined
       if (responseData?.code === 200 && innerData) {
         const { usAudioUrl, ukAudioUrl } = innerData
-        // 先播放美式发音
+        console.log('[playWord] 美式URL:', usAudioUrl, '英式URL:', ukAudioUrl)
         if (usAudioUrl) {
           await playAudioUrl(usAudioUrl).catch(e => console.warn('美式发音失败', e))
         }
-        // 再播放英式发音
         if (ukAudioUrl && ukAudioUrl !== usAudioUrl) {
           await playAudioUrl(ukAudioUrl).catch(e => console.warn('英式发音失败', e))
         }
       } else {
+        console.warn('[playWord] 响应code非200或无data:', responseData)
         Taro.showToast({ title: '无法获取发音', icon: 'none' })
       }
-    } catch (err) {
-      console.error('playWord error:', err)
-      Taro.showToast({ title: '发音获取失败，请重试', icon: 'none' })
+    } catch (err: any) {
+      console.error('[playWord] 完整错误:', JSON.stringify(err))
+      if (err?.errMsg?.includes('request:fail')) {
+        Taro.showToast({ title: '请求失败，请检查后端地址配置', icon: 'none', duration: 3000 })
+      } else {
+        Taro.showToast({ title: '发音获取失败: ' + (err?.message || '未知错误'), icon: 'none' })
+      }
     }
   }, [])
 
@@ -539,8 +545,7 @@ export default function DictationPage() {
           {phase === 'playing' && (
             <>
               <Volume2 size={48} color="#3b82f6" className="mb-4" />
-              <Text className="block text-gray-500 mb-2">正在朗读单词...</Text>
-              <Text className="block text-3xl font-bold text-gray-800">{currentWord?.word}</Text>
+              <Text className="block text-gray-500 mb-2">正在朗读单词，请仔细听...</Text>
             </>
           )}
 
