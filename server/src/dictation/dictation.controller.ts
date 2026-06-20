@@ -205,60 +205,70 @@ export class DictationController {
   }
 
   // ========== Speak Word - Both US and UK Pronunciation ==========
-  // Fix 第五版: 下载TTS音频并上传到自己的存储，解决小程序域名白名单问题
+  // Fix 第九版: 使用有道词典免费TTS (稳定可靠, 无需API Key)
   @Post('speak-word-both')
   @HttpCode(200)
   async speakWordBoth(@Body() body: { word: string }) {
     const { word } = body;
     console.log('[speak-word-both] word:', word);
 
-    const googleTtsUrl = (text: string, lang: string) =>
-      `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
-
-    // Fix 第五版: 下载并上传音频到自己的存储
-    const fetchAndUpload = async (lang: string): Promise<string | null> => {
+    // 有道词典 TTS: type=0 美式, type=1 英式
+    const fetchTts = async (text: string, type: number): Promise<Buffer | null> => {
       try {
-        const url = googleTtsUrl(word, lang);
-        console.log(`[speak-word-both] fetching TTS for ${lang}:`, url);
-        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
-        const audioBuffer = Buffer.from(response.data);
-        const fileName = `dictation/tts/${Date.now()}_${word.replace(/\s+/g, '_')}_${lang}.mp3`;
-        const fileKey = await this.storage.uploadFile({
-          fileContent: audioBuffer,
-          fileName,
-          contentType: 'audio/mpeg',
+        const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text)}&type=${type}`;
+        console.log(`[speak-word-both] fetching: ${url}`);
+        const res = await axios.get(url, {
+          responseType: 'arraybuffer',
+          timeout: 10000,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
         });
-        const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
-        console.log(`[speak-word-both] uploaded TTS for ${lang}:`, audioUrl);
-        return audioUrl;
-      } catch (err) {
-        console.error(`[speak-word-both] TTS download failed for ${lang}:`, err?.message || err);
+        if (res.status === 200 && res.data?.length > 100) {
+          console.log(`[speak-word-both] Youdao TTS type=${type}: size=${res.data.length}`);
+          return Buffer.from(res.data);
+        }
+        console.warn(`[speak-word-both] Youdao TTS type=${type}: unexpected response, size=${res.data?.length || 0}`);
+        return null;
+      } catch (e) {
+        console.error(`[speak-word-both] Youdao TTS type=${type} failed:`, e?.message || e);
         return null;
       }
     };
 
-    let usAudioUrl = await fetchAndUpload('en');
-    let ukAudioUrl = await fetchAndUpload('en-GB');
-
-    // 如果都失败，尝试使用 TTS SDK
-    if (!usAudioUrl) {
+    const uploadBuffer = async (buf: Buffer, suffix: string): Promise<string | null> => {
       try {
-        const usResp = await this.ttsClient.synthesize({
-          uid: 'dictation-user',
-          text: word,
-          speaker: 'zh_female_vv_uranus_bigtts',
-          audioFormat: 'mp3',
-          sampleRate: 24000,
+        const fileName = `dictation/tts/${Date.now()}_${word.replace(/\s+/g, '_')}_${suffix}.mp3`;
+        const fileKey = await this.storage.uploadFile({
+          fileContent: buf,
+          fileName,
+          contentType: 'audio/mpeg',
         });
-        usAudioUrl = usResp.audioUri;
-        console.log('[speak-word-both] TTS SDK US:', usAudioUrl);
+        const audioUrl = await this.storage.generatePresignedUrl({ key: fileKey, expireTime: 86400 });
+        console.log(`[speak-word-both] uploaded ${suffix}:`, audioUrl);
+        return audioUrl;
       } catch (e) {
-        console.error('[speak-word-both] TTS SDK failed:', e?.message || e);
+        console.error(`[speak-word-both] upload ${suffix} failed:`, e?.message || e);
+        return null;
       }
-    }
+    };
 
+    // 美式发音: type=0
+    const usBuf = await fetchTts(word, 0);
+    // 英式发音: type=1
+    const ukBuf = await fetchTts(word, 1);
+
+    let usAudioUrl = usBuf ? await uploadBuffer(usBuf, 'us') : null;
+    let ukAudioUrl = ukBuf ? await uploadBuffer(ukBuf, 'uk') : null;
+
+    // 英式失败用美式
+    if (!ukAudioUrl && usAudioUrl) ukAudioUrl = usAudioUrl;
+    if (!usAudioUrl && ukAudioUrl) usAudioUrl = ukAudioUrl;
+
+    // 全部失败：返回有道直链（H5可用，小程序需配置域名）
+    if (!usAudioUrl) {
+      usAudioUrl = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=0`;
+    }
     if (!ukAudioUrl) {
-      ukAudioUrl = usAudioUrl; // 备用相同
+      ukAudioUrl = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(word)}&type=1`;
     }
 
     return {

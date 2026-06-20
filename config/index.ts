@@ -90,10 +90,12 @@ export default defineConfig<'vite'>(async (merge, _env) => {
     outputRoot,
     plugins: ['@tarojs/plugin-generator', ...buildMiniCIPluginConfig()],
     defineConstants: {
+      // Fix: 开发环境 PROJECT_DOMAIN 为空字符串时使用相对路径（Vite proxy 代理 /api 到后端）
+      // 生产环境 PROJECT_DOMAIN 为实际后端域名
       PROJECT_DOMAIN: JSON.stringify(
-        process.env.PROJECT_DOMAIN ||
-          process.env.COZE_PROJECT_DOMAIN_DEFAULT ||
-          '',
+        process.env.PROJECT_DOMAIN !== undefined && process.env.PROJECT_DOMAIN !== null
+          ? process.env.PROJECT_DOMAIN
+          : process.env.COZE_PROJECT_DOMAIN_DEFAULT || '',
       ),
       TARO_ENV: JSON.stringify(process.env.TARO_ENV),
     },
