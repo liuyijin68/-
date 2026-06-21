@@ -1,7 +1,7 @@
 // Fix: 修复图片识别数据解析路径（Bug 1）
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { View, Text, Image } from '@tarojs/components'
-import Taro from '@tarojs/taro'
+import Taro, { useLoad } from '@tarojs/taro'
 import { Network } from '@/network'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,19 +20,27 @@ export default function UploadPage() {
   const [isRecognizing, setIsRecognizing] = useState(false)
   const [words, setWords] = useState<WordItem[]>([])
   const [errorMsg, setErrorMsg] = useState('')
+  // Fix: 防止 chooseImage 取消后再次点击无响应
+  const choosingRef = useRef(false)
 
-  // 选择图片（带隐私授权）
+  // Fix: 页面加载时一次性完成隐私授权，避免重复调用导致 chooseImage 卡死
+  useLoad(() => {
+    if (Taro.getEnv() === Taro.ENV_TYPE.WEAPP && typeof wx !== 'undefined' && wx.requirePrivacyAuthorize) {
+      wx.requirePrivacyAuthorize({
+        success: () => { console.log('[隐私授权] 已同意') },
+        fail: () => { console.log('[隐私授权] 用户拒绝或已授权') },
+      })
+    }
+  })
+
+  // Fix: 使用 useRef 防止 chooseImage 并发调用导致取消后再次点击无响应
   const handleChooseImage = async () => {
+    if (choosingRef.current) {
+      console.log('[chooseImage] 正在选择中，忽略重复点击')
+      return
+    }
+    choosingRef.current = true
     try {
-      // 微信小程序隐私授权：相册/相机
-      if (Taro.getEnv() === Taro.ENV_TYPE.WEAPP && typeof wx !== 'undefined' && wx.requirePrivacyAuthorize) {
-        try {
-          await wx.requirePrivacyAuthorize({})
-        } catch {
-          Taro.showToast({ title: '请先同意隐私协议', icon: 'none' })
-          return
-        }
-      }
       const res = await Taro.chooseImage({
         count: 1,
         sizeType: ['compressed'],
@@ -41,8 +49,18 @@ export default function UploadPage() {
       if (res.tempFilePaths && res.tempFilePaths.length > 0) {
         await uploadImage(res.tempFilePaths[0])
       }
-    } catch (err) {
+    } catch (err: any) {
+      // 用户取消选择不提示错误
+      if (err?.errMsg?.includes('cancel')) {
+        console.log('[chooseImage] 用户取消选择')
+        return
+      }
       console.error('选择图片失败:', err)
+    } finally {
+      // Fix: 延迟重置，确保微信 API 内部状态完全清理
+      setTimeout(() => {
+        choosingRef.current = false
+      }, 500)
     }
   }
 
