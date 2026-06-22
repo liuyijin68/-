@@ -4,6 +4,7 @@ import { memoryStorage } from 'multer';
 import { AppController } from '@/app.controller';
 import { AppService } from '@/app.service';
 import { DictationModule } from '@/dictation/dictation.module';
+import { GrowthModule } from '@/growth/growth.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { DictationModule } from '@/dictation/dictation.module';
       },
     }),
     DictationModule,
+    GrowthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

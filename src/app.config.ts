@@ -4,7 +4,9 @@ export default (typeof definePageConfig === 'function'
         'pages/index/index',
         'pages/upload/index',
         'pages/dictation/index',
-        'pages/vocabulary/index'
+        'pages/vocabulary/index',
+        'pages/profile/index',
+        'pages/points/index'
       ],
       window: {
         backgroundTextStyle: 'light',
@@ -27,7 +29,7 @@ export default (typeof definePageConfig === 'function'
       }
     })
   : {
-      pages: ['pages/index/index', 'pages/upload/index', 'pages/dictation/index', 'pages/vocabulary/index'],
+      pages: ['pages/index/index', 'pages/upload/index', 'pages/dictation/index', 'pages/vocabulary/index', 'pages/profile/index', 'pages/points/index'],
       window: {
         backgroundTextStyle: 'light',
         navigationBarBackgroundColor: '#fff',

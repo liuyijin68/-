@@ -253,13 +253,37 @@ export default function DictationPage() {
   }
 
   // Fix Bug 3: 正确时自动继续
-  const handleMeaningCorrect = () => {
+  const handleMeaningCorrect = async () => {
     setMeaningResult('correct')
     setFeedbackMsg('回答正确！')
     setCorrectCount((prev) => prev + 1)
     // 如果是复习词库，从复习库中删除
     if (vocabularyType === 'review') {
       removeFromReview(currentWord)
+    }
+    // 养成系统：答对发放积分
+    try {
+      const stored = Taro.getStorageSync('current_user')
+      if (stored) {
+        const user = typeof stored === 'string' ? JSON.parse(stored) : stored
+        if (user?.id) {
+          const earnRes = await Network.request({
+            url: '/api/growth/earn',
+            method: 'POST',
+            data: { userId: user.id, word: currentWord.word },
+          })
+          const earnData = (earnRes?.data as any)?.data
+          if (earnData) {
+            // 更新本地缓存的用户信息
+            user.points = earnData.points
+            user.masteredWords = earnData.masteredWords
+            user.level = earnData.level
+            Taro.setStorageSync('current_user', JSON.stringify(user))
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('积分发放失败:', err)
     }
     setTimeout(() => {
       setMeaningResult('')
