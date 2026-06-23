@@ -1,0 +1,229 @@
+================================================================================
+                   小淘单词听写王 - 完整程序
+                   生成时间: 2026-06-23
+================================================================================
+
+=== 项目结构 ===
+src/
+├── app.config.ts          # 应用配置（页面路由、权限声明）
+├── app.css                # 全局样式
+├── app.tsx                # 应用入口
+├── pages/
+│   ├── index/index.tsx    # 首页（用户选择/注册 + 功能入口）
+│   ├── upload/index.tsx   # 拍照上传识别页面
+│   ├── dictation/index.tsx # 听写流程页面
+│   ├── vocabulary/index.tsx # 词库管理页面
+│   ├── profile/index.tsx  # 个人中心（等级展示）
+│   └── points/index.tsx   # 积分管理（兑换 + 明细）
+├── components/ui/         # shadcn/ui 组件库
+└── network/index.ts       # 网络请求封装
+
+server/src/
+├── main.ts                # NestJS 入口
+├── app.module.ts          # 根模块
+├── app.controller.ts      # 根控制器
+├── dictation/
+│   ├── dictation.module.ts
+│   ├── dictation.controller.ts  # 听写 API（识别/TTS/手写/词库）
+│   └── dictation.service.ts
+├── growth/
+│   ├── growth.module.ts
+│   ├── growth.controller.ts     # 养成系统 API（注册/积分/等级/历史）
+│   └── growth.service.ts
+└── storage/database/
+    ├── shared/schema.ts         # 数据库表定义
+    └── supabase-client.ts       # Supabase 客户端
+
+================================================================================
+一、数据库表结构 (server/src/storage/database/shared/schema.ts)
+================================================================================
+
+-- users 用户表
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(50) UNIQUE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- user_progress 用户进度表
+CREATE TABLE user_progress (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) UNIQUE,
+  points INTEGER DEFAULT 0,
+  mastered_words INTEGER DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- points_history 积分历史表
+CREATE TABLE points_history (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  type VARCHAR(10) NOT NULL CHECK (type IN ('earn', 'spend')),
+  amount INTEGER NOT NULL,
+  reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+================================================================================
+二、后端 API 接口
+================================================================================
+
+【养成系统 API】前缀: /api/growth
+
+1. POST /api/growth/register    注册用户
+   请求: { username: string }
+   响应: { code, msg, data: { id, username, points, masteredWords, level } }
+
+2. GET  /api/growth/users       获取所有用户列表
+   响应: { code, msg, data: UserInfo[] }
+
+3. GET  /api/growth/user/:id    获取单个用户信息
+   响应: { code, msg, data: UserInfo }
+
+4. POST /api/growth/earn        获取积分（掌握单词）
+   请求: { userId: number, word: string }
+   响应: { code, msg, data: { points, masteredWords, level } }
+
+5. POST /api/growth/spend       消耗积分（兑换）
+   请求: { userId: number, amount: number, reason: string }
+   响应: { code, msg, data: { points, masteredWords } }
+
+6. GET  /api/growth/history/:userId  积分历史明细
+   响应: { code, msg, data: PointsRecord[] }
+
+7. GET  /api/growth/stats/:userId    积分统计
+   响应: { code, msg, data: { totalEarned, totalSpent, balance } }
+
+【听写 API】前缀: /api/dictation
+
+1. POST /api/dictation/upload-image          上传图片到TOS
+2. POST /api/dictation/recognize-all-words    LLM识别图片中所有单词
+3. POST /api/dictation/speak-word-both       获取单词美式+英式发音URL
+4. POST /api/dictation/upload-audio          上传录音
+5. POST /api/dictation/recognize-handwriting  手写识别
+6. POST /api/dictation/recognize-speech       语音识别
+7. POST /api/dictation/check-answer          检查拼写答案
+8. POST /api/dictation/get-new-words         获取新单词词库
+9. POST /api/dictation/get-review-words      获取复习词库
+10. POST /api/dictation/add-to-review        加入复习词库
+11. POST /api/dictation/remove-from-review   从复习词库移除
+12. POST /api/dictation/add-word             手动添加单词
+13. POST /api/dictation/remove-word          手动删除单词
+
+================================================================================
+三、养成系统核心逻辑 (server/src/growth/growth.service.ts)
+================================================================================
+
+等级计算规则：
+  stars = masteredWords % 10        (每10星 = 1月亮)
+  moons  = floor(masteredWords / 10) % 10  (每10月 = 1太阳)
+  suns   = floor(masteredWords / 100)
+
+示例：
+  掌握 0 个单词  → 0☀️ 0🌙 0⭐ (空星)
+  掌握 5 个单词  → 0☀️ 0🌙 5⭐
+  掌握 15 个单词 → 0☀️ 1🌙 5⭐
+  掌握 235 个单词 → 2☀️ 3🌙 5⭐
+
+积分规则：
+  - 每掌握一个单词 +1 积分
+  - 积分可消耗（兑换），等级只升不降
+  - 答对时自动调用 earn API 发放积分
+
+================================================================================
+四、前端页面说明
+================================================================================
+
+【首页】src/pages/index/index.tsx
+  - 未选择用户：显示用户列表 + 注册入口
+  - 已选择用户：显示等级图标、积分余额、功能入口（听写/拍照/词库/个人中心/积分管理）
+  - 用户信息缓存到 Taro Storage key='current_user'
+
+【个人中心】src/pages/profile/index.tsx
+  - 显示用户头像、名称、注册日期
+  - 等级展示（太阳/月亮/星星图标）
+  - 积分概览（当前余额/累计获取/累计消耗）
+  - 跳转积分管理入口
+
+【积分管理】src/pages/points/index.tsx
+  - 积分余额卡片（渐变背景）
+  - 积分兑换表单（数量 + 原因）
+  - 积分明细列表（earn/spend 历史记录，带时间戳）
+
+【听写流程】src/pages/dictation/index.tsx
+  - 答对时自动调用 /api/growth/earn 发放积分
+  - 更新本地缓存的用户积分和等级信息
+
+================================================================================
+五、前端控制台日志（最新）
+================================================================================
+
+=== 前端控制台日志 ===
+{"level":"log","message":"[DevTools] iframe bridge injected (development mode only)","timestamp":1782179560928}
+{"level":"debug","message":"[vite] connecting...","timestamp":1782179563386}
+{"level":"debug","message":"[vite] connected.","timestamp":1782179563593}
+{"level":"log","message":"[DevTools] iframe bridge injected (development mode only)","timestamp":1782181330481}
+{"level":"debug","message":"[vite] connecting...","timestamp":1782181331165}
+{"level":"debug","message":"[vite] connected.","timestamp":1782181331387}
+
+=== 后端启动日志 ===
+[server] > pnpm --filter server dev
+[server] 
+[web] 
+[web] > coze-mini-program@1.0.0 dev:web /workspace/projects
+[web] > taro build --type h5 --watch
+[web] 
+[web] 👽 Taro v4.1.9
+[web] 
+[server] 
+[server] > server@1.0.0 dev /workspace/projects/server
+[server] > nest start --watch
+[server] 
+[server] [2J[3J[H[[90m10:22:03 AM[0m] Starting compilation in watch mode...
+[server] 
+[web] [dotenv@17.2.3] injecting env (0) from .env.local -- tip: ⚙️  override existing env vars with { override: true }
+[web]   ➜  Local:   http://localhost:5000/
+[web]   ➜  Network: http://9.96.6.116:5000/
+[web]   ➜  Network: http://169.254.112.58:5000/
+[server] [[90m10:22:06 AM[0m] Found 0 errors. Watching for file changes.
+[server] 
+[server] (node:878) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.
+[server] (Use `node --trace-deprecation ...` to show where the warning was created)
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMulterModule dependencies initialized[39m[38;5;3m +9ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mGrowthModule dependencies initialized[39m[38;5;3m +2ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDictationModule dependencies initialized[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/api}:[39m[38;5;3m +4ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/hello, GET} route[39m[38;5;3m +2ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/health, GET} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDictationController {/api/dictation}:[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/upload-image, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/recognize-all-words, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/speak-word-both, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/upload-audio, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/recognize-handwriting, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/recognize-speech, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/check-answer, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/get-new-words, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/get-review-words, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/add-to-review, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/remove-from-review, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/add-word, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/dictation/remove-word, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mGrowthController {/api/growth}:[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/register, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/users, GET} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/user/:id, GET} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/earn, POST} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/spend, POST} route[39m[38;5;3m +1ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/history/:userId, GET} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/growth/stats/:userId, GET} route[39m[38;5;3m +0ms[39m
+[server] [32m[Nest] 923  - [39m2026-06-23 10:22:06 AM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +1ms[39m
+[server] Server running on http://localhost:3000
+[server] Application is running on: http://localhost:3000
+[web] Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+[web]   npx update-browserslist-db@latest
+[web]   Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[web] (node:846) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+[web] (Use `node --trace-deprecation ...` to show where the warning was created)
