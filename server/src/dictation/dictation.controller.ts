@@ -159,7 +159,11 @@ export class DictationController {
         wordsWithMeanings.push({ word, meanings, date: new Date().toISOString().split('T')[0] });
       }
       
-      newWordBank = wordsWithMeanings;
+      // 追加到词库最前面（而非覆盖）
+      const existingWords = new Set(newWordBank.map(w => w.word.toLowerCase()));
+      const newEntries = wordsWithMeanings.filter(w => !existingWords.has(w.word.toLowerCase()));
+      newWordBank = [...newEntries, ...newWordBank];
+      console.log('[recognize-all-words] appended', newEntries.length, 'new words, total:', newWordBank.length);
       return {
         code: 200,
         msg: 'success',
@@ -488,6 +492,43 @@ export class DictationController {
       return { code: 200, msg: 'success', data: { words: newWordBank } };
     } else {
       reviewWordBank = reviewWordBank.filter(w => w.word !== word);
+      return { code: 200, msg: 'success', data: { words: reviewWordBank } };
+    }
+  }
+
+  /** 导入初始词库（七年级上册单词表） */
+  @Post('import-initial-words')
+  @HttpCode(200)
+  async importInitialWords(@Body() body: { words: { word: string; meanings: string[] }[] }) {
+    const { words } = body;
+    if (!words || !Array.isArray(words) || words.length === 0) {
+      return { code: 400, msg: '单词列表不能为空', data: null };
+    }
+    const existingWords = new Set(newWordBank.map(w => w.word.toLowerCase()));
+    const newEntries: WordEntry[] = [];
+    for (const w of words) {
+      if (!existingWords.has(w.word.toLowerCase())) {
+        newEntries.push({ word: w.word, meanings: w.meanings, date: new Date().toISOString().split('T')[0] });
+        existingWords.add(w.word.toLowerCase());
+      }
+    }
+    newWordBank = [...newEntries, ...newWordBank];
+    console.log('[import-initial-words] imported', newEntries.length, 'words, total:', newWordBank.length);
+    return { code: 200, msg: 'success', data: { imported: newEntries.length, total: newWordBank.length } };
+  }
+
+  /** 掌握单词后从词库删除 */
+  @Post('remove-from-bank')
+  @HttpCode(200)
+  async removeFromBank(@Body() body: { word: string; bank: 'new' | 'review' }) {
+    const { word, bank } = body;
+    if (bank === 'new') {
+      newWordBank = newWordBank.filter(w => w.word !== word);
+      console.log('[remove-from-bank] new bank size:', newWordBank.length);
+      return { code: 200, msg: 'success', data: { words: newWordBank } };
+    } else {
+      reviewWordBank = reviewWordBank.filter(w => w.word !== word);
+      console.log('[remove-from-bank] review bank size:', reviewWordBank.length);
       return { code: 200, msg: 'success', data: { words: reviewWordBank } };
     }
   }

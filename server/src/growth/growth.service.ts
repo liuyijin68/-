@@ -1,12 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { getSupabaseClient } from '../storage/database/supabase-client';
 
+export interface LevelInfo {
+  princesses: number;
+  girls: number;
+  suns: number;
+  moons: number;
+  stars: number;
+}
+
 export interface UserInfo {
   id: number;
   username: string;
   points: number;
   masteredWords: number;
-  level: { suns: number; moons: number; stars: number };
+  level: LevelInfo;
   created_at: string;
 }
 
@@ -18,14 +26,82 @@ export interface PointsRecord {
   created_at: string;
 }
 
+export interface EarnResult {
+  points: number;
+  masteredWords: number;
+  level: LevelInfo;
+  upgradeBonus: number;
+  upgradeReason: string;
+}
+
 @Injectable()
 export class GrowthService {
-  /** 计算等级：每10星=1月，每10月=1太阳 */
-  calcLevel(mastered: number): { suns: number; moons: number; stars: number } {
+  /** 等级：每10星=1月，每10月=1太阳，每10太阳=1女孩，每10女孩=1公主 */
+  calcLevel(mastered: number): LevelInfo {
     const stars = mastered % 10;
     const moons = Math.floor(mastered / 10) % 10;
-    const suns = Math.floor(mastered / 100);
-    return { suns, moons, stars };
+    const suns = Math.floor(mastered / 100) % 10;
+    const girls = Math.floor(mastered / 1000) % 10;
+    const princesses = Math.floor(mastered / 10000);
+    return { princesses, girls, suns, moons, stars };
+  }
+
+  /** 格式化等级为可读字符串 */
+  formatLevel(level: LevelInfo): string {
+    const parts: string[] = [];
+    if (level.princesses > 0) parts.push(`${level.princesses}👸`);
+    if (level.girls > 0) parts.push(`${level.girls}👧`);
+    if (level.suns > 0) parts.push(`${level.suns}☀️`);
+    if (level.moons > 0) parts.push(`${level.moons}🌙`);
+    if (level.stars > 0 || parts.length === 0) parts.push(`${level.stars}⭐`);
+    return parts.join(' ');
+  }
+
+  /** 检查升级并计算奖励积分 */
+  private checkUpgradeBonus(oldMastered: number, newMastered: number): { bonus: number; reason: string } {
+    const oldLevel = this.calcLevel(oldMastered);
+    const newLevel = this.calcLevel(newMastered);
+    let bonus = 0;
+    const reasons: string[] = [];
+
+    // 每获得一个月亮 → +2
+    if (newLevel.moons > oldLevel.moons || newLevel.suns > oldLevel.suns || newLevel.girls > oldLevel.girls || newLevel.princesses > oldLevel.princesses) {
+      // 检查月亮
+      const oldMoons = oldLevel.moons + oldLevel.suns * 10 + oldLevel.girls * 100 + oldLevel.princesses * 1000;
+      const newMoons = newLevel.moons + newLevel.suns * 10 + newLevel.girls * 100 + newLevel.princesses * 1000;
+      const moonDiff = newMoons - oldMoons;
+      if (moonDiff > 0) {
+        bonus += moonDiff * 2;
+        reasons.push(`${moonDiff}个月亮`);
+      }
+    }
+
+    // 每获得一个太阳 → +20（但已算过月亮奖励，这里只算太阳的额外部分）
+    const oldSuns = oldLevel.suns + oldLevel.girls * 10 + oldLevel.princesses * 100;
+    const newSuns = newLevel.suns + newLevel.girls * 10 + newLevel.princesses * 100;
+    const sunDiff = newSuns - oldSuns;
+    if (sunDiff > 0) {
+      bonus += sunDiff * 20;
+      reasons.push(`${sunDiff}个太阳`);
+    }
+
+    // 每获得一个女孩 → +200
+    const oldGirls = oldLevel.girls + oldLevel.princesses * 10;
+    const newGirls = newLevel.girls + newLevel.princesses * 10;
+    const girlDiff = newGirls - oldGirls;
+    if (girlDiff > 0) {
+      bonus += girlDiff * 200;
+      reasons.push(`${girlDiff}个小女孩`);
+    }
+
+    // 每获得一个公主 → +2000
+    const princessDiff = newLevel.princesses - oldLevel.princesses;
+    if (princessDiff > 0) {
+      bonus += princessDiff * 2000;
+      reasons.push(`${princessDiff}个公主`);
+    }
+
+    return { bonus, reason: reasons.length > 0 ? reasons.join('、') : '' };
   }
 
   /** 注册用户 */
@@ -36,17 +112,14 @@ export class GrowthService {
       throw new Error('用户名长度需在1-50字符之间');
     }
 
-    // 检查是否已存在
     const { data: existing } = await client.from('users').select('id').eq('username', trimmed).maybeSingle();
     if (existing) {
       throw new Error('该用户名已被注册');
     }
 
-    // 创建用户
     const { data: user, error: userErr } = await client.from('users').insert({ username: trimmed }).select().single();
     if (userErr) throw new Error(`创建用户失败: ${userErr.message}`);
 
-    // 创建进度记录
     const { error: progErr } = await client.from('user_progress').insert({
       user_id: user.id,
       points: 0,
@@ -112,24 +185,27 @@ export class GrowthService {
     };
   }
 
-  /** 获取积分（掌握单词） */
-  async earnPoints(userId: number, word: string): Promise<{ points: number; masteredWords: number; level: { suns: number; moons: number; stars: number } }> {
+  /** 获取积分（掌握单词），含升级奖励 */
+  async earnPoints(userId: number, word: string): Promise<EarnResult> {
     const client = getSupabaseClient();
 
-    // 更新进度：积分+1，掌握数+1
     const { data: progress, error: progErr } = await client.from('user_progress').select('*').eq('user_id', userId).maybeSingle();
     if (progErr) throw new Error(`查询进度失败: ${progErr.message}`);
     if (!progress) throw new Error('用户进度不存在');
 
-    const newPoints = progress.points + 1;
-    const newMastered = progress.mastered_words + 1;
+    const oldMastered = progress.mastered_words;
+    const newMastered = oldMastered + 1;
+
+    // 检查升级奖励
+    const { bonus, reason } = this.checkUpgradeBonus(oldMastered, newMastered);
+    const newPoints = progress.points + 1 + bonus;
 
     const { error: updateErr } = await client.from('user_progress')
       .update({ points: newPoints, mastered_words: newMastered, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
     if (updateErr) throw new Error(`更新进度失败: ${updateErr.message}`);
 
-    // 记录积分历史
+    // 记录基础积分
     await client.from('points_history').insert({
       user_id: userId,
       type: 'earn',
@@ -137,10 +213,22 @@ export class GrowthService {
       reason: `掌握单词: ${word}`,
     });
 
+    // 如果有升级奖励，单独记录
+    if (bonus > 0) {
+      await client.from('points_history').insert({
+        user_id: userId,
+        type: 'earn',
+        amount: bonus,
+        reason: `升级奖励: ${reason}`,
+      });
+    }
+
     return {
       points: newPoints,
       masteredWords: newMastered,
       level: this.calcLevel(newMastered),
+      upgradeBonus: bonus,
+      upgradeReason: reason,
     };
   }
 
@@ -161,7 +249,6 @@ export class GrowthService {
       .eq('user_id', userId);
     if (updateErr) throw new Error(`更新积分失败: ${updateErr.message}`);
 
-    // 记录积分历史
     await client.from('points_history').insert({
       user_id: userId,
       type: 'spend',
@@ -191,7 +278,6 @@ export class GrowthService {
     const { data: progress } = await client.from('user_progress').select('points').eq('user_id', userId).maybeSingle();
     const balance = progress?.points ?? 0;
 
-    // 统计总获取
     const { data: earnRows, error: earnErr } = await client.from('points_history')
       .select('amount')
       .eq('user_id', userId)
@@ -199,7 +285,6 @@ export class GrowthService {
     if (earnErr) throw new Error(`统计失败: ${earnErr.message}`);
     const totalEarned = (earnRows || []).reduce((sum, r) => sum + r.amount, 0);
 
-    // 统计总消耗
     const { data: spendRows, error: spendErr } = await client.from('points_history')
       .select('amount')
       .eq('user_id', userId)

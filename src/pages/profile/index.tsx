@@ -1,49 +1,52 @@
 import { useState } from 'react'
 import { View, Text } from '@tarojs/components'
-import Taro, { useLoad } from '@tarojs/taro'
+import Taro, { useLoad, useDidShow } from '@tarojs/taro'
 import { Network } from '@/network'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Sun, Moon, Star, User, ArrowLeft, TrendingUp, Award } from 'lucide-react-taro'
+import { Separator } from '@/components/ui/separator'
+import { ArrowLeft, User, Coins, TrendingUp, ChevronRight } from 'lucide-react-taro'
 
 interface UserInfo {
   id: number
   username: string
   points: number
   masteredWords: number
-  level: { suns: number; moons: number; stars: number }
+  level: { princesses: number; girls: number; suns: number; moons: number; stars: number }
   created_at: string
 }
 
-const CURRENT_USER_KEY = 'current_user'
-
-export default function ProfilePage() {
+export default function Profile() {
   const [user, setUser] = useState<UserInfo | null>(null)
   const [stats, setStats] = useState<{ totalEarned: number; totalSpent: number; balance: number } | null>(null)
 
   const loadData = async () => {
+    const cached = Taro.getStorageSync('current_user')
+    if (!cached?.id) {
+      Taro.showToast({ title: '请先选择用户', icon: 'none' })
+      setTimeout(() => Taro.navigateBack(), 1000)
+      return
+    }
     try {
-      const stored = Taro.getStorageSync(CURRENT_USER_KEY)
-      if (!stored) {
-        Taro.showToast({ title: '请先选择用户', icon: 'none' })
-        setTimeout(() => Taro.navigateBack(), 1000)
-        return
-      }
-      const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored
-      const res = await Network.request({ url: `/api/growth/user/${parsed.id}` })
+      const res = await Network.request({
+        url: `/api/growth/user/${cached.id}`,
+        method: 'GET',
+      })
       const data = (res?.data as any)?.data
       if (data) {
         setUser(data)
-        Taro.setStorageSync(CURRENT_USER_KEY, JSON.stringify(data))
+        Taro.setStorageSync('current_user', data)
       }
-
-      const statsRes = await Network.request({ url: `/api/growth/stats/${parsed.id}` })
+      const statsRes = await Network.request({
+        url: `/api/growth/stats/${cached.id}`,
+        method: 'GET',
+      })
       const statsData = (statsRes?.data as any)?.data
       if (statsData) {
         setStats(statsData)
       }
     } catch (err) {
-      console.error('加载数据失败:', err)
+      console.error('加载用户信息失败:', err)
     }
   }
 
@@ -51,118 +54,120 @@ export default function ProfilePage() {
     loadData()
   })
 
-  const renderLevel = (level: { suns: number; moons: number; stars: number }) => {
-    const icons: JSX.Element[] = []
-    for (let i = 0; i < level.suns; i++) {
-      icons.push(<Sun key={`sun-${i}`} size={24} color="#f59e0b" />)
-    }
-    for (let i = 0; i < level.moons; i++) {
-      icons.push(<Moon key={`moon-${i}`} size={24} color="#6366f1" />)
-    }
-    for (let i = 0; i < level.stars; i++) {
-      icons.push(<Star key={`star-${i}`} size={24} color="#f59e0b" />)
-    }
-    if (icons.length === 0) {
-      return <Star size={24} color="#d1d5db" />
-    }
-    return <View className="flex flex-row items-center gap-1 flex-wrap">{icons}</View>
-  }
+  useDidShow(() => {
+    loadData()
+  })
 
-  const getLevelText = (level: { suns: number; moons: number; stars: number }) => {
-    const parts: string[] = []
-    if (level.suns > 0) parts.push(`${level.suns}☀️`)
-    if (level.moons > 0) parts.push(`${level.moons}🌙`)
-    if (level.stars > 0) parts.push(`${level.stars}⭐`)
-    return parts.join(' ') || '暂无等级'
+  const renderLevelIcon = (level: UserInfo['level']) => {
+    const parts: { icon: string; count: number; label: string }[] = []
+    if (level.princesses > 0) parts.push({ icon: '👸', count: level.princesses, label: '公主' })
+    if (level.girls > 0) parts.push({ icon: '👧', count: level.girls, label: '女孩' })
+    if (level.suns > 0) parts.push({ icon: '☀️', count: level.suns, label: '太阳' })
+    if (level.moons > 0) parts.push({ icon: '🌙', count: level.moons, label: '月亮' })
+    if (level.stars > 0 || parts.length === 0) parts.push({ icon: '⭐', count: level.stars, label: '星星' })
+    return parts
   }
 
   if (!user) {
     return (
-      <View className="flex flex-col items-center justify-center h-screen bg-white">
+      <View className="flex flex-col h-full bg-gray-50 items-center justify-center">
         <Text className="block text-gray-400">加载中...</Text>
       </View>
     )
   }
 
-  return (
-    <View className="flex flex-col min-h-screen bg-gray-50">
-      {/* 顶部导航 */}
-      <View className="bg-white px-4 pt-12 pb-4">
-        <View className="flex flex-row items-center gap-3 mb-4">
-          <View onClick={() => Taro.navigateBack()}>
-            <ArrowLeft size={20} color="#666" />
-          </View>
-          <Text className="block text-lg font-semibold text-gray-800">个人中心</Text>
-        </View>
+  const levelParts = renderLevelIcon(user.level)
 
-        {/* 用户头像与名称 */}
-        <View className="flex flex-row items-center gap-4">
-          <View className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
-            <User size={32} color="#3b82f6" />
-          </View>
-          <View>
-            <Text className="block text-xl font-bold text-gray-800">{user.username}</Text>
-            <Text className="block text-xs text-gray-400 mt-1">
-              注册于 {user.created_at?.split('T')[0] || '-'}
-            </Text>
-          </View>
-        </View>
+  return (
+    <View className="flex flex-col h-full bg-gray-50">
+      {/* 顶部导航 */}
+      <View className="bg-white px-4 py-3 flex flex-row items-center gap-3 border-b border-gray-100">
+        <Button variant="ghost" size="sm" onClick={() => Taro.navigateBack()}>
+          <ArrowLeft size={20} color="#666" />
+        </Button>
+        <Text className="block text-lg font-semibold text-gray-800">个人中心</Text>
       </View>
 
-      {/* 等级展示 */}
-      <Card className="mx-4 mt-4">
-        <CardContent className="p-4">
-          <View className="flex flex-row items-center gap-2 mb-3">
-            <Award size={18} color="#f59e0b" />
-            <Text className="block text-sm font-semibold text-gray-700">当前等级</Text>
-          </View>
-          <View className="flex flex-row items-center justify-between">
-            {renderLevel(user.level)}
-            <Text className="block text-sm text-gray-500">{getLevelText(user.level)}</Text>
-          </View>
-          <View className="mt-3 pt-3 border-t border-gray-100">
-            <Text className="block text-xs text-gray-400">
-              累计掌握 <Text className="text-blue-500 font-semibold">{user.masteredWords}</Text> 个单词
-              · 升级规则：10⭐ = 1🌙，10🌙 = 1☀️
+      <View className="flex-1 px-4 py-4 overflow-y-auto">
+        {/* 用户信息卡片 */}
+        <Card className="mb-4">
+          <CardContent className="p-5 flex flex-col items-center">
+            <View className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center mb-3">
+              <User size={40} color="#3b82f6" />
+            </View>
+            <Text className="block text-xl font-bold text-gray-800">{user.username}</Text>
+            <Text className="block text-xs text-gray-400 mt-1">
+              注册于 {user.created_at ? new Date(user.created_at).toLocaleDateString('zh-CN') : '-'}
             </Text>
-          </View>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      {/* 积分信息 */}
-      <Card className="mx-4 mt-3">
-        <CardContent className="p-4">
-          <View className="flex flex-row items-center gap-2 mb-3">
-            <TrendingUp size={18} color="#22c55e" />
-            <Text className="block text-sm font-semibold text-gray-700">积分概览</Text>
-          </View>
-          <View className="flex flex-row justify-between">
-            <View className="flex flex-col items-center flex-1">
-              <Text className="block text-2xl font-bold text-blue-500">{user.points}</Text>
-              <Text className="block text-xs text-gray-400 mt-1">当前余额</Text>
+        {/* 等级展示 */}
+        <Card className="mb-4">
+          <CardContent className="p-5">
+            <View className="flex flex-row items-center gap-2 mb-3">
+              <TrendingUp size={18} color="#f59e0b" />
+              <Text className="block font-semibold text-gray-700">等级</Text>
             </View>
-            <View className="w-px bg-gray-200" />
-            <View className="flex flex-col items-center flex-1">
-              <Text className="block text-lg font-semibold text-green-500">{stats?.totalEarned ?? '-'}</Text>
-              <Text className="block text-xs text-gray-400 mt-1">累计获取</Text>
+            <View className="flex flex-row flex-wrap gap-2">
+              {levelParts.map((part, idx) => (
+                <View key={idx} className="bg-amber-50 rounded-xl px-3 py-2 flex flex-row items-center gap-1">
+                  <Text className="text-lg">{part.icon}</Text>
+                  <Text className="text-sm font-semibold text-gray-700">×{part.count}</Text>
+                </View>
+              ))}
             </View>
-            <View className="w-px bg-gray-200" />
-            <View className="flex flex-col items-center flex-1">
-              <Text className="block text-lg font-semibold text-orange-500">{stats?.totalSpent ?? '-'}</Text>
-              <Text className="block text-xs text-gray-400 mt-1">累计消耗</Text>
+            <Text className="block text-xs text-gray-400 mt-2">
+              累计掌握 {user.masteredWords} 个单词
+            </Text>
+            {/* 等级说明 */}
+            <View className="mt-3 bg-gray-50 rounded-lg p-3">
+              <Text className="block text-xs text-gray-500">等级规则：</Text>
+              <Text className="block text-xs text-gray-400">10⭐ = 1🌙 · 10🌙 = 1☀️ · 10☀️ = 1👧 · 10👧 = 1👸</Text>
+              <Text className="block text-xs text-gray-400 mt-1">升级奖励：🌙+2分 · ☀️+20分 · 👧+200分 · 👸+2000分</Text>
             </View>
-          </View>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      {/* 快捷操作 */}
-      <View className="px-4 mt-4">
-        <Button
-          className="w-full bg-amber-500 text-white rounded-xl py-3"
-          onClick={() => Taro.navigateTo({ url: '/pages/points/index' })}
-        >
-          积分管理（兑换 / 明细）
-        </Button>
+        {/* 积分概览 */}
+        <Card className="mb-4">
+          <CardContent className="p-5">
+            <View className="flex flex-row items-center gap-2 mb-3">
+              <Coins size={18} color="#f59e0b" />
+              <Text className="block font-semibold text-gray-700">积分概览</Text>
+            </View>
+            <View className="flex flex-row justify-between">
+              <View className="flex flex-col items-center flex-1">
+                <Text className="block text-2xl font-bold text-amber-600">{user.points}</Text>
+                <Text className="block text-xs text-gray-400">当前余额</Text>
+              </View>
+              <Separator orientation="vertical" className="h-10" />
+              <View className="flex flex-col items-center flex-1">
+                <Text className="block text-lg font-semibold text-green-600">{stats?.totalEarned || 0}</Text>
+                <Text className="block text-xs text-gray-400">累计获取</Text>
+              </View>
+              <Separator orientation="vertical" className="h-10" />
+              <View className="flex flex-col items-center flex-1">
+                <Text className="block text-lg font-semibold text-red-500">{stats?.totalSpent || 0}</Text>
+                <Text className="block text-xs text-gray-400">累计消耗</Text>
+              </View>
+            </View>
+          </CardContent>
+        </Card>
+
+        {/* 快捷入口 */}
+        <Card className="cursor-pointer active:opacity-80" onClick={() => Taro.navigateTo({ url: '/pages/points/index' })}>
+          <CardContent className="p-4 flex flex-row items-center justify-between">
+            <View className="flex flex-row items-center gap-3">
+              <Coins size={20} color="#f59e0b" />
+              <View>
+                <Text className="block font-medium text-gray-800">积分管理</Text>
+                <Text className="block text-xs text-gray-400">积分兑换、明细查询</Text>
+              </View>
+            </View>
+            <ChevronRight size={16} color="#d1d5db" />
+          </CardContent>
+        </Card>
       </View>
     </View>
   )
