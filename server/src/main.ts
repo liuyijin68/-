@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '@/app.module';
 import * as express from 'express';
+import { join } from 'path';
 import { HttpStatusInterceptor } from '@/interceptors/http-status.interceptor';
 
 function parsePort(): number {
@@ -25,6 +26,11 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  // 托管静态 HTML 网页
+  const publicPath = join(__dirname, '..', 'public');
+  app.use(express.static(publicPath));
+  console.log(`Static files served from: ${publicPath}`);
 
   // 全局拦截器：统一将 POST 请求的 201 状态码改为 200
   app.useGlobalInterceptors(new HttpStatusInterceptor());
