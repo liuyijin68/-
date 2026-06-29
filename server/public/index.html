@@ -2,130 +2,95 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>小淘单词听写王</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-:root {
-  --primary: #3b82f6;
-  --primary-dark: #2563eb;
-  --primary-light: #eff6ff;
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --bg: #f8fafc;
-  --card: #ffffff;
-  --text: #1e293b;
-  --text-secondary: #64748b;
-  --border: #e2e8f0;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-  --shadow-lg: 0 10px 25px rgba(0,0,0,0.1);
-}
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-.container { max-width: 480px; margin: 0 auto; padding: 16px; min-height: 100vh; }
-.card { background: var(--card); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 20px; border-radius: var(--radius-sm); border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; text-decoration: none; }
-.btn:active { transform: scale(0.97); }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-dark); }
-.btn-outline { background: #fff; color: var(--text); border: 1.5px solid var(--border); }
-.btn-outline:hover { background: #f1f5f9; }
-.btn-success { background: var(--success); color: #fff; }
-.btn-danger { background: var(--danger); color: #fff; }
-.btn-warning { background: var(--warning); color: #fff; }
-.btn-sm { padding: 6px 14px; font-size: 13px; }
-.btn-block { width: 100%; }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.input { width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); font-size: 15px; background: #f8fafc; transition: border-color 0.2s; outline: none; }
-.input:focus { border-color: var(--primary); background: #fff; }
-.label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
-.badge { display: inline-flex; align-items: center; gap: 3px; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-.badge-primary { background: var(--primary-light); color: var(--primary); }
-.badge-success { background: #f0fdf4; color: var(--success); }
-.badge-warning { background: #fefce8; color: #b45309; }
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.flex-1 { flex: 1; }
-.items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
-.gap-2 { gap: 8px; }
-.gap-3 { gap: 12px; }
-.gap-4 { gap: 16px; }
-.text-center { text-align: center; }
-.text-sm { font-size: 13px; }
-.text-xs { font-size: 11px; }
-.text-lg { font-size: 18px; }
-.text-xl { font-size: 20px; }
-.text-2xl { font-size: 24px; }
-.text-3xl { font-size: 30px; }
-.font-bold { font-weight: 700; }
-.text-secondary { color: var(--text-secondary); }
-.text-primary { color: var(--primary); }
-.text-success { color: var(--success); }
-.text-danger { color: var(--danger); }
-.mt-2 { margin-top: 8px; }
-.mt-3 { margin-top: 12px; }
-.mt-4 { margin-top: 16px; }
-.mb-2 { margin-bottom: 8px; }
-.mb-3 { margin-bottom: 12px; }
-.mb-4 { margin-bottom: 16px; }
-.p-3 { padding: 12px; }
-.p-4 { padding: 16px; }
-.w-full { width: 100%; }
-.rounded { border-radius: var(--radius-sm); }
-.hidden { display: none !important; }
-.level-icon { font-size: 28px; line-height: 1; }
-.level-icon-sm { font-size: 20px; }
-.modal-overlay { position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-.modal { background: #fff; border-radius: var(--radius); padding: 24px; width: 100%; max-width: 360px; box-shadow: var(--shadow-lg); }
-.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 12px 24px; border-radius: 25px; font-size: 14px; z-index: 2000; animation: fadeIn 0.3s; }
-@keyframes fadeIn { from { opacity:0; transform:translateX(-50%) translateY(-10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-canvas { border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: #fff; touch-action: none; }
-.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.3s; }
-.word-display { font-size: 36px; font-weight: 800; color: var(--primary); letter-spacing: 2px; text-align: center; padding: 20px 0; }
-.spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #e2e8f0; border-top-color: var(--primary); border-radius: 50%; animation: spin 0.6s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.empty-state { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
-.empty-icon { font-size: 48px; margin-bottom: 12px; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; background: #f5f0eb; }
+  .page { display: none; min-height: 100vh; }
+  .page.active { display: block; }
+  .btn { cursor: pointer; transition: all 0.15s; user-select: none; }
+  .btn:active { transform: scale(0.96); opacity: 0.85; }
+  .input-field { width: 100%; padding: 12px 16px; border: 2px solid #e2d5c8; border-radius: 12px; font-size: 16px; outline: none; background: #fff; }
+  .input-field:focus { border-color: #8b5e3c; }
+  .card { background: #fff; border-radius: 16px; padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+  .level-icon { font-size: 20px; }
+  canvas#handCanvas { border: 2px solid #e2d5c8; border-radius: 12px; touch-action: none; }
+  .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 10px 24px; border-radius: 20px; z-index: 999; font-size: 14px; animation: fadeInOut 2s ease; pointer-events: none; }
+  @keyframes fadeInOut { 0%{opacity:0;top:40px} 10%{opacity:1;top:60px} 90%{opacity:1;top:60px} 100%{opacity:0;top:40px} }
 </style>
 </head>
 <body>
-<div id="app" class="container"></div>
-
+<div id="app"></div>
 <script>
-// ============ State ============
-const STATE = {
-  page: 'login', // login | home | dictation | vocabulary | profile | points
-  currentUser: null,
+// ============================================================
+// 小淘单词听写王 v3.0 - 重构版
+// 前端：Web Speech API + localStorage
+// 后端：Growth(积分等级) + LLM(图片/手写识别) + TOS(上传)
+// ============================================================
+
+const S = {
+  page: 'login',
   users: [],
-  // Dictation
-  wordList: [],
-  currentIndex: 0,
-  totalCount: 0,
-  phase: 'idle', // idle | playing | spelling | meaning | correct | wrong | finished
-  spellingInput: '',
-  meaningInput: '',
-  bankType: 'new',
-  countInput: 10,
-  showCountPicker: false,
-  // Vocabulary
+  currentUser: null,
   newWords: [],
   reviewWords: [],
-  vocabTab: 'new',
-  // Points
-  pointsHistory: [],
-  pointsStats: null,
-  // Canvas
-  canvasCtx: null,
-  canvasDrawing: false,
-  canvasLastX: 0,
-  canvasLastY: 0,
+  // dictation
+  dictCount: 10,
+  dictQueue: [],
+  dictIndex: 0,
+  currentWord: null,
+  phase: '', // playing|spelling|meaning|result
+  correctSpell: false,
+  correctMeaning: false,
+  // handwriting
+  handCanvas: null,
+  handCtx: null,
+  handDrawing: false,
+  // level emojis
+  levels: ['⭐','🌙','☀️','👧','👸'],
 };
 
-// ============ API Helper ============
+// ==================== INITIAL WORDS (188) ====================
+const INITIAL_WORDS = [{"word":"good","meanings":["好的"]},{"word":"morning","meanings":["早晨；上午"]},{"word":"hi","meanings":["嗨；你好"]},{"word":"hello","meanings":["你好；喂"]},{"word":"afternoon","meanings":["下午"]},{"word":"evening","meanings":["晚上；傍晚"]},{"word":"how","meanings":["怎样；如何"]},{"word":"are","meanings":["是"]},{"word":"you","meanings":["你；你们"]},{"word":"I","meanings":["我"]},{"word":"am","meanings":["是"]},{"word":"fine","meanings":["好的；健康的"]},{"word":"thanks","meanings":["感谢；谢谢"]},{"word":"OK","meanings":["好；不错"]},{"word":"name","meanings":["名字；名称"]},{"word":"list","meanings":["名单；列表"]},{"word":"what","meanings":["什么"]},{"word":"is","meanings":["是"]},{"word":"this","meanings":["这；这个"]},{"word":"in","meanings":["用（表示使用语言、材料等）"]},{"word":"English","meanings":["英语；英格兰的；英语的"]},{"word":"it","meanings":["它"]},{"word":"a","meanings":["（用于单数可数名词前，表示未曾提到的）一（人、事、物）"]},{"word":"map","meanings":["地图"]},{"word":"cup","meanings":["杯子"]},{"word":"ruler","meanings":["尺；直尺"]},{"word":"pen","meanings":["笔；钢笔"]},{"word":"orange","meanings":["橙子"]},{"word":"jacket","meanings":["夹克衫；短上衣"]},{"word":"key","meanings":["钥匙"]},{"word":"quilt","meanings":["被子；床罩"]},{"word":"that","meanings":["那；那个"]},{"word":"spell","meanings":["用字母拼；拼写"]},{"word":"please","meanings":["请"]},{"word":"color","meanings":["颜色"]},{"word":"red","meanings":["红色的"]},{"word":"yellow","meanings":["黄色的"]},{"word":"green","meanings":["绿色的"]},{"word":"blue","meanings":["蓝色的"]},{"word":"black","meanings":["黑色的"]},{"word":"white","meanings":["白色的"]},{"word":"purple","meanings":["紫色的"]},{"word":"brown","meanings":["棕色的"]},{"word":"the","meanings":["指已提到或易领会到的人或事物"]},{"word":"now","meanings":["现在；目前"]},{"word":"see","meanings":["理解；明白"]},{"word":"can","meanings":["能；会"]},{"word":"say","meanings":["说；讲"]},{"word":"my","meanings":["我的"]},{"word":"first","meanings":["第一"]},{"word":"friend","meanings":["朋友"]},{"word":"China","meanings":["中国"]},{"word":"last","meanings":["最后的；末尾的"]},{"word":"middle","meanings":["中间的；中间"]},{"word":"school","meanings":["学校"]},{"word":"number","meanings":["数字；号码"]},{"word":"zero","meanings":["零"]},{"word":"one","meanings":["一"]},{"word":"two","meanings":["二"]},{"word":"three","meanings":["三"]},{"word":"four","meanings":["四"]},{"word":"five","meanings":["五"]},{"word":"six","meanings":["六"]},{"word":"seven","meanings":["七"]},{"word":"eight","meanings":["八"]},{"word":"nine","meanings":["九"]},{"word":"ten","meanings":["十"]},{"word":"telephone","meanings":["电话；电话机"]},{"word":"family","meanings":["家；家庭"]},{"word":"mother","meanings":["母亲；妈妈"]},{"word":"father","meanings":["父亲；爸爸"]},{"word":"parent","meanings":["父（母）亲"]},{"word":"brother","meanings":["兄；弟"]},{"word":"sister","meanings":["姐；妹"]},{"word":"grandmother","meanings":["（外）祖母；奶奶；外婆"]},{"word":"grandfather","meanings":["（外）祖父；爷爷；外公"]},{"word":"grandparent","meanings":["祖父（母）；外祖父（母）"]},{"word":"those","meanings":["那些"]},{"word":"these","meanings":["这些"]},{"word":"they","meanings":["他（她、它）们"]},{"word":"well","meanings":["好；嗯；好吧"]},{"word":"have","meanings":["经受；经历"]},{"word":"day","meanings":["一天；一日；白天"]},{"word":"bye","meanings":["再见"]},{"word":"son","meanings":["儿子"]},{"word":"cousin","meanings":["堂兄（弟、姐、妹）；表兄（弟、姐、妹）"]},{"word":"uncle","meanings":["舅父；叔父；伯父；姑父；姨父"]},{"word":"aunt","meanings":["姑母；姨母；伯母；婶母；舅母"]},{"word":"photo","meanings":["照片"]},{"word":"next","meanings":["下一个（的）；接下来（的）"]},{"word":"picture","meanings":["照片；图画"]},{"word":"girl","meanings":["女孩"]},{"word":"dog","meanings":["狗"]},{"word":"book","meanings":["书"]},{"word":"table","meanings":["桌子"]},{"word":"chair","meanings":["椅子"]},{"word":"sofa","meanings":["沙发"]},{"word":"desk","meanings":["书桌"]},{"word":"room","meanings":["房间"]},{"word":"hat","meanings":["帽子"]},{"word":"head","meanings":["头"]},{"word":"radio","meanings":["收音机"]},{"word":"clock","meanings":["时钟"]},{"word":"tape","meanings":["磁带；录音带；录像带"]},{"word":"player","meanings":["播放机"]},{"word":"model","meanings":["模型"]},{"word":"plane","meanings":["飞机"]},{"word":"tidy","meanings":["整洁的；井井有条的"]},{"word":"but","meanings":["但是"]},{"word":"our","meanings":["我们的"]},{"word":"everywhere","meanings":["处处；到处；各个地方"]},{"word":"always","meanings":["总是"]},{"word":"basketball","meanings":["篮球"]},{"word":"tennis","meanings":["网球"]},{"word":"volleyball","meanings":["排球"]},{"word":"soccer","meanings":["英式足球"]},{"word":"ball","meanings":["球"]},{"word":"ping-pong","meanings":["乒乓球"]},{"word":"bat","meanings":["球棒；球拍"]},{"word":"do","meanings":["做；干（用于构成否定句及疑问句）"]},{"word":"play","meanings":["参加（比赛或运动）；玩耍"]},{"word":"let","meanings":["允许；让"]},{"word":"go","meanings":["去；走"]},{"word":"we","meanings":["我们"]},{"word":"us","meanings":["（we的宾格）我们"]},{"word":"let's","meanings":["让我们（一起）"]},{"word":"late","meanings":["迟到"]},{"word":"has","meanings":["（have的第三人称单数形式）有"]},{"word":"get","meanings":["去取（或带来）；得到"]},{"word":"great","meanings":["美妙的；伟大的"]},{"word":"sound","meanings":["听起来好像"]},{"word":"interesting","meanings":["有趣的"]},{"word":"difficult","meanings":["困难的"]},{"word":"relaxing","meanings":["轻松的；令人放松的"]},{"word":"fun","meanings":["有趣的；使人快乐的"]},{"word":"boring","meanings":["没趣的；令人厌倦的"]},{"word":"same","meanings":["相同的"]},{"word":"love","meanings":["爱；喜爱"]},{"word":"with","meanings":["和……在一起；带有；使用"]},{"word":"sport","meanings":["体育运动"]},{"word":"only","meanings":["只；仅"]},{"word":"like","meanings":["喜欢；喜爱"]},{"word":"easy","meanings":["容易的；不费力的"]},{"word":"after","meanings":["在……以后"]},{"word":"class","meanings":["班级；课"]},{"word":"classmate","meanings":["同班同学"]},{"word":"banana","meanings":["香蕉"]},{"word":"hamburger","meanings":["汉堡包"]},{"word":"tomato","meanings":["西红柿"]},{"word":"milk","meanings":["牛奶"]},{"word":"ice-cream","meanings":["冰激凌"]},{"word":"salad","meanings":["沙拉"]},{"word":"strawberry","meanings":["草莓"]},{"word":"pear","meanings":["梨"]},{"word":"sugar","meanings":["糖"]},{"word":"bread","meanings":["面包"]},{"word":"rice","meanings":["米饭；大米"]},{"word":"egg","meanings":["鸡蛋"]},{"word":"carrot","meanings":["胡萝卜"]},{"word":"chicken","meanings":["鸡肉"]},{"word":"vegetable","meanings":["蔬菜"]},{"word":"fruit","meanings":["水果"]},{"word":"apple","meanings":["苹果"]},{"word":"lunch","meanings":["午餐"]},{"word":"dinner","meanings":["（中午或晚上吃的）正餐"]},{"word":"birthday","meanings":["生日"]},{"word":"week","meanings":["周；星期"]},{"word":"sure","meanings":["当然；肯定；一定"]},{"word":"right","meanings":["正确的；适当的"]},{"word":"then","meanings":["那么"]},{"word":"food","meanings":["食物"]},{"word":"star","meanings":["明星；星星"]},{"word":"eat","meanings":["吃"]},{"word":"well","meanings":["好；令人满意地"]},{"word":"habit","meanings":["习惯"]},{"word":"healthy","meanings":["健康的"]},{"word":"really","meanings":["真正地"]},{"word":"question","meanings":["问题"]},{"word":"want","meanings":["需要；想要"]},{"word":"be","meanings":["变成"]},{"word":"fat","meanings":["肥的；肥胖的"]},{"word":"sweater","meanings":["毛衣"]},{"word":"trousers","meanings":["裤子"]},{"word":"short","meanings":["短的；矮的"]},{"word":"sock","meanings":["短袜"]},{"word":"skirt","meanings":["裙子"]},{"word":"shoe","meanings":["鞋"]},{"word":"dollar","meanings":["元（美国、加拿大等国的货币单位）"]},{"word":"big","meanings":["大的；大号的"]},{"word":"small","meanings":["小的；小号的"]},{"word":"short","meanings":["短的；矮的"]},{"word":"long","meanings":["长的"]},{"word":"woman","meanings":["女子"]},{"word":"need","meanings":["需要"]},{"word":"look","meanings":["看；看上去"]},{"word":"pair","meanings":["一双；一对"]},{"word":"take","meanings":["买下；拿；取"]},{"word":"much","meanings":["许多；大量；多少"]},{"word":"very","meanings":["很；非常"]},{"word":"price","meanings":["价格"]},{"word":"each","meanings":["每个"]},{"word":"anybody","meanings":["任何人"]},{"word":"afford","meanings":["买得起；承担得起"]},{"word":"our","meanings":["我们的"]},{"word":"clothes","meanings":["衣服；服装"]},{"word":"store","meanings":["商店"]},{"word":"sell","meanings":["出售；销售；卖"]},{"word":"buy","meanings":["购买；买"]},{"word":"boy","meanings":["男孩"]},{"word":"all","meanings":["所有的；全部的"]},{"word":"term","meanings":["学期"]},{"word":"busy","meanings":["忙碌的；无暇的"]},{"word":"time","meanings":["时间"]},{"word":"favorite","meanings":["特别喜爱的（人或事物）"]},{"word":"subject","meanings":["学科；科目"]},{"word":"science","meanings":["科学"]},{"word":"music","meanings":["音乐；乐曲"]},{"word":"math","meanings":["数学"]},{"word":"Chinese","meanings":["语文；汉语；汉语的；中国的"]},{"word":"geography","meanings":["地理学"]},{"word":"history","meanings":["历史"]},{"word":"why","meanings":["为什么"]},{"word":"because","meanings":["因为"]},{"word":"Monday","meanings":["星期一"]},{"word":"Friday","meanings":["星期五"]},{"word":"Saturday","meanings":["星期六"]},{"word":"free","meanings":["空闲的"]},{"word":"cool","meanings":["妙极的；酷的"]},{"word":"Tuesday","meanings":["星期二"]},{"word":"Wednesday","meanings":["星期三"]},{"word":"Thursday","meanings":["星期四"]},{"word":"Sunday","meanings":["星期日"]},{"word":"useful","meanings":["有用的；有益的"]},{"word":"from","meanings":["从……开始"]},{"word":"Mrs","meanings":["太太；夫人"]},{"word":"finish","meanings":["完成；做好"]},{"word":"lesson","meanings":["课；一节课"]},{"word":"hour","meanings":["小时"]}];
+
+// ==================== STATE ====================
+function getWordBankKey() {
+  return 'ww_dict_' + (S.currentUser?.id || 'anon');
+}
+
+function loadWordBank() {
+  try {
+    const raw = localStorage.getItem(getWordBankKey());
+    if (raw) {
+      const d = JSON.parse(raw);
+      S.newWords = d.newWords || [];
+      S.reviewWords = d.reviewWords || [];
+    } else {
+      // First time: load initial words
+      S.newWords = JSON.parse(JSON.stringify(INITIAL_WORDS));
+      S.reviewWords = [];
+      saveWordBank();
+    }
+  } catch (e) {
+    S.newWords = JSON.parse(JSON.stringify(INITIAL_WORDS));
+    S.reviewWords = [];
+  }
+}
+
+function saveWordBank() {
+  try {
+    localStorage.setItem(getWordBankKey(), JSON.stringify({
+      newWords: S.newWords,
+      reviewWords: S.reviewWords,
+    }));
+  } catch (e) {
+    console.error('saveWordBank error:', e);
+  }
+}
+
+// ==================== API ====================
 async function api(url, options = {}) {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -134,8 +99,13 @@ async function api(url, options = {}) {
   return res.json();
 }
 
-// ============ Toast ============
-function showToast(msg) {
+async function apiUpload(url, formData) {
+  const res = await fetch(url, { method: 'POST', body: formData });
+  return res.json();
+}
+
+// ==================== TOAST ====================
+function toast(msg) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = msg;
@@ -143,858 +113,649 @@ function showToast(msg) {
   setTimeout(() => el.remove(), 2000);
 }
 
-// ============ Level Display ============
+// ==================== LEVEL ====================
 function calcLevel(mastered) {
   const stars = mastered % 10;
   const moons = Math.floor(mastered / 10) % 10;
   const suns = Math.floor(mastered / 100) % 10;
   const girls = Math.floor(mastered / 1000) % 10;
   const princesses = Math.floor(mastered / 10000);
-  return { princesses, girls, suns, moons, stars };
+  let icon = '';
+  if (princesses > 0) icon += '👸'.repeat(princesses);
+  if (girls > 0) icon += '👧'.repeat(girls);
+  if (suns > 0) icon += '☀️'.repeat(suns);
+  if (moons > 0) icon += '🌙'.repeat(moons);
+  icon += '⭐'.repeat(stars);
+  return icon || '0⭐';
 }
 
-function formatLevel(level) {
-  const parts = [];
-  if (level.princesses > 0) parts.push(`${level.princesses}👸`);
-  if (level.girls > 0) parts.push(`${level.girls}👧`);
-  if (level.suns > 0) parts.push(`${level.suns}☀️`);
-  if (level.moons > 0) parts.push(`${level.moons}🌙`);
-  if (level.stars > 0 || parts.length === 0) parts.push(`${level.stars}⭐`);
-  return parts.join(' ');
+function calcUpgradeBonus(oldCount, newCount) {
+  let bonus = 0;
+  const oldLevel = Math.floor(oldCount / 10);
+  const newLevel = Math.floor(newCount / 10);
+  for (let lv = oldLevel + 1; lv <= newLevel; lv++) {
+    if (lv % 1000 === 0) bonus += 2000; // princess
+    else if (lv % 100 === 0) bonus += 200; // girl
+    else if (lv % 10 === 0) bonus += 20; // sun
+    else bonus += 2; // moon
+  }
+  return bonus;
 }
 
-// ============ Render ============
+// ==================== TTS (Web Speech API) ====================
+function speakWord(word) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) { resolve(); return; }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(word);
+    u.lang = 'en-US';
+    u.rate = 0.8;
+    u.pitch = 1;
+    u.onend = () => resolve();
+    u.onerror = () => resolve();
+    window.speechSynthesis.speak(u);
+  });
+}
+
+// ==================== RENDER ====================
 function render() {
   const app = document.getElementById('app');
-  switch (STATE.page) {
+  switch (S.page) {
     case 'login': app.innerHTML = renderLogin(); break;
     case 'home': app.innerHTML = renderHome(); break;
     case 'dictation': app.innerHTML = renderDictation(); break;
-    case 'vocabulary': app.innerHTML = renderVocabulary(); break;
+    case 'upload': app.innerHTML = renderUpload(); break;
     case 'profile': app.innerHTML = renderProfile(); break;
-    case 'points': app.innerHTML = renderPoints(); break;
+    case 'history': app.innerHTML = renderHistory(); break;
   }
   bindEvents();
 }
 
-// ============ Login Page ============
+// ==================== LOGIN ====================
 function renderLogin() {
-  const usersHtml = STATE.users.map(u => {
-    const lv = calcLevel(u.masteredWords || 0);
-    return `<div class="card flex items-center gap-3" style="cursor:pointer" data-action="select-user" data-id="${u.id}">
-      <div style="font-size:40px">👤</div>
-      <div class="flex-1">
-        <div class="font-bold text-lg">${escHtml(u.username)}</div>
-        <div class="text-sm text-secondary">${formatLevel(lv)} · ${u.points || 0}积分</div>
-      </div>
-      <div style="font-size:20px;color:var(--text-secondary)">→</div>
-    </div>`;
-  }).join('');
-
-  return `<div class="flex flex-col gap-4" style="padding-top:40px">
-    <div class="text-center mb-4">
-      <div style="font-size:56px">📚</div>
-      <h1 class="text-2xl font-bold mt-2">小淘单词听写王</h1>
-      <p class="text-sm text-secondary mt-1">选择用户开始学习</p>
-    </div>
-    ${STATE.users.length > 0 ? usersHtml : '<div class="empty-state"><div class="empty-icon">👋</div><p>还没有用户，请先注册</p></div>'}
-    <div class="card">
-      <div class="flex gap-2">
-        <input class="input flex-1" id="reg-username" placeholder="输入新用户名" maxlength="20">
-        <button class="btn btn-primary" data-action="register">注册</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-// ============ Home Page ============
-function renderHome() {
-  const u = STATE.currentUser;
-  if (!u) return renderLogin();
-  const lv = calcLevel(u.masteredWords || 0);
-  return `<div class="flex flex-col gap-4">
-    <div class="card text-center">
-      <div style="font-size:48px">👤</div>
-      <div class="text-xl font-bold mt-2">${escHtml(u.username)}</div>
-      <div class="text-2xl mt-1" style="letter-spacing:2px">${formatLevel(lv)}</div>
-      <div class="flex justify-center gap-4 mt-3">
-        <span class="badge badge-primary">⭐ ${u.points || 0} 积分</span>
-        <span class="badge badge-success">📝 ${u.masteredWords || 0} 词</span>
-      </div>
-    </div>
-    <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="card text-center" style="cursor:pointer" data-action="start-dictation" data-bank="new">
-        <div style="font-size:36px">🎧</div>
-        <div class="font-bold mt-1">新单词听写</div>
-        <div class="text-xs text-secondary">${STATE.newWords.length} 个单词</div>
-      </div>
-      <div class="card text-center" style="cursor:pointer" data-action="start-dictation" data-bank="review">
-        <div style="font-size:36px">🔄</div>
-        <div class="font-bold mt-1">复习听写</div>
-        <div class="text-xs text-secondary">${STATE.reviewWords.length} 个单词</div>
-      </div>
-      <div class="card text-center" style="cursor:pointer" data-action="goto" data-page="vocabulary">
-        <div style="font-size:36px">📋</div>
-        <div class="font-bold mt-1">词库管理</div>
-      </div>
-      <div class="card text-center" style="cursor:pointer" data-action="goto" data-page="profile">
-        <div style="font-size:36px">🏆</div>
-        <div class="font-bold mt-1">个人中心</div>
-      </div>
-    </div>
-    <button class="btn btn-outline btn-block" data-action="logout">切换用户</button>
-  </div>`;
-}
-
-// ============ Dictation Page ============
-function renderDictation() {
-  const w = STATE.wordList[STATE.currentIndex];
-  const progress = STATE.totalCount > 0 ? ((STATE.currentIndex) / STATE.totalCount * 100) : 0;
-
-  if (STATE.phase === 'idle' || STATE.phase === 'count-pick') {
-    return renderCountPicker();
-  }
-
-  let body = '';
-  if (STATE.phase === 'playing') {
-    body = `<div class="text-center p-4">
-      <div style="font-size:64px">🔊</div>
-      <p class="text-secondary mt-3">正在朗读单词，请仔细听...</p>
-      <button class="btn btn-outline mt-4" data-action="replay">🔁 再听一遍</button>
-      <button class="btn btn-primary mt-3 btn-block" data-action="start-spelling">我听到了，开始拼写</button>
-    </div>`;
-  } else if (STATE.phase === 'spelling') {
-    body = `<div class="card">
-      <div class="text-sm text-secondary mb-2">请输入英文拼写：</div>
-      <div class="flex gap-2">
-        <input class="input flex-1" id="spelling-input" placeholder="输入英文单词..." value="${escHtml(STATE.spellingInput)}" autocomplete="off">
-        <button class="btn btn-outline btn-sm" data-action="open-canvas">✏️</button>
-      </div>
-      <div class="flex gap-2 mt-3">
-        <button class="btn btn-primary flex-1" data-action="submit-spelling">提交拼写</button>
-        <button class="btn btn-outline flex-1" data-action="dont-know">不知道</button>
-      </div>
-    </div>`;
-  } else if (STATE.phase === 'meaning') {
-    body = `<div class="card">
-      <div class="text-sm text-secondary mb-2">请输入中文含义：</div>
-      <div class="flex gap-2">
-        <input class="input flex-1" id="meaning-input" placeholder="输入中文含义..." value="${escHtml(STATE.meaningInput)}" autocomplete="off">
-        <button class="btn btn-outline btn-sm" data-action="open-canvas">✏️</button>
-      </div>
-      <div class="flex gap-2 mt-3">
-        <button class="btn btn-primary flex-1" data-action="submit-meaning">提交含义</button>
-        <button class="btn btn-outline flex-1" data-action="dont-know">不知道</button>
-      </div>
-    </div>`;
-  } else if (STATE.phase === 'correct') {
-    body = `<div class="text-center p-4">
-      <div style="font-size:64px">✅</div>
-      <p class="text-xl font-bold text-success mt-2">回答正确！</p>
-      <p class="text-secondary mt-1">${escHtml(w?.word || '')} — ${(w?.meanings || []).join('；')}</p>
-      <button class="btn btn-primary mt-4 btn-block" data-action="next-word">继续下一题</button>
-    </div>`;
-  } else if (STATE.phase === 'wrong') {
-    body = `<div class="text-center p-4">
-      <div style="font-size:64px">❌</div>
-      <p class="text-xl font-bold text-danger mt-2">回答错误</p>
-      <p class="mt-2"><strong>${escHtml(w?.word || '')}</strong></p>
-      <p class="text-secondary">${(w?.meanings || []).join('；')}</p>
-      <p class="text-sm text-secondary mt-2">已加入复习词库</p>
-      <button class="btn btn-primary mt-4 btn-block" data-action="next-word">继续下一题</button>
-    </div>`;
-  } else if (STATE.phase === 'finished') {
-    body = `<div class="text-center p-4">
-      <div style="font-size:64px">🎉</div>
-      <p class="text-xl font-bold mt-2">听写完成！</p>
-      <p class="text-secondary mt-1">共 ${STATE.totalCount} 个单词</p>
-      <button class="btn btn-primary mt-4 btn-block" data-action="back-home">返回首页</button>
-    </div>`;
-  }
-
-  return `<div class="flex flex-col gap-3">
-    <div class="flex items-center justify-between">
-      <button class="btn btn-outline btn-sm" data-action="back-home">← 返回</button>
-      <span class="text-sm text-secondary">${STATE.currentIndex + 1} / ${STATE.totalCount}</span>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
-    ${body}
-    ${STATE.showCanvas ? renderCanvas() : ''}
-  </div>`;
-}
-
-function renderCountPicker() {
-  const total = STATE.wordList.length;
-  return `<div class="flex flex-col gap-4" style="padding-top:40px">
-    <div class="text-center">
-      <div style="font-size:56px">🎧</div>
-      <h2 class="text-xl font-bold mt-2">${STATE.bankType === 'new' ? '新单词' : '复习'}听写</h2>
-      <p class="text-secondary mt-1">词库共 ${total} 个单词</p>
-    </div>
-    ${total > 10 ? `<div class="card">
-      <label class="label">本次听写数量</label>
-      <input class="input" type="number" id="count-input" value="${STATE.countInput}" min="1" max="${total}">
-      <p class="text-xs text-secondary mt-1">最多 ${total} 个</p>
-    </div>` : ''}
-    <button class="btn btn-primary btn-block" data-action="begin-dictation" style="padding:14px">
-      开始听写（${total > 10 ? Math.min(STATE.countInput, total) : total} 个单词）
-    </button>
-    <button class="btn btn-outline btn-block" data-action="back-home">返回首页</button>
-  </div>`;
-}
-
-function renderCanvas() {
-  return `<div class="modal-overlay" data-action="close-canvas">
-    <div class="modal" style="max-width:340px" onclick="event.stopPropagation()">
-      <div class="flex justify-between items-center mb-3">
-        <span class="font-bold">手写输入</span>
-        <button class="btn btn-outline btn-sm" data-action="close-canvas">✕</button>
-      </div>
-      <canvas id="handwriting-canvas" width="300" height="200"></canvas>
-      <div class="flex gap-2 mt-3">
-        <button class="btn btn-outline flex-1 btn-sm" data-action="clear-canvas">清除</button>
-        <button class="btn btn-primary flex-1 btn-sm" data-action="submit-canvas">识别</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-// ============ Vocabulary Page ============
-function renderVocabulary() {
-  const words = STATE.vocabTab === 'new' ? STATE.newWords : STATE.reviewWords;
-  const wordsHtml = words.length === 0
-    ? '<div class="empty-state"><div class="empty-icon">📭</div><p>词库为空</p></div>'
-    : words.map((w, i) => `<div class="flex items-center justify-between p-3" style="border-bottom:1px solid var(--border)">
+  const items = S.users.map(u =>
+    `<div class="card btn mb-3 flex items-center justify-between" onclick="selectUser(${u.id})">
       <div>
-        <span class="font-bold">${escHtml(w.word)}</span>
-        <span class="text-sm text-secondary ml-2">${(w.meanings || []).join('；')}</span>
+        <div class="font-semibold text-lg">${esc(u.username)}</div>
+        <div class="text-sm text-gray-500">${calcLevel(u.masteredWords || 0)} · ${u.points || 0}积分</div>
       </div>
-      <button class="btn btn-outline btn-sm" data-action="delete-word" data-index="${i}" data-word="${escHtml(w.word)}">删除</button>
-    </div>`).join('');
+      <span class="text-gray-400 text-xl">→</span>
+    </div>`
+  ).join('');
 
-  return `<div class="flex flex-col gap-3">
-    <div class="flex items-center justify-between">
-      <button class="btn btn-outline btn-sm" data-action="back-home">← 返回</button>
-      <span class="font-bold">词库管理</span>
-      <div style="width:60px"></div>
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="text-center mb-6 pt-8">
+      <div class="text-5xl mb-3">📝</div>
+      <h1 class="text-2xl font-bold" style="color:#6b4c2e;">小淘单词听写王</h1>
+      <p class="text-gray-500 text-sm mt-1">选择用户开始学习</p>
     </div>
-    <div class="flex gap-2">
-      <button class="btn flex-1 ${STATE.vocabTab === 'new' ? 'btn-primary' : 'btn-outline'}" data-action="switch-tab" data-tab="new">新单词 (${STATE.newWords.length})</button>
-      <button class="btn flex-1 ${STATE.vocabTab === 'review' ? 'btn-primary' : 'btn-outline'}" data-action="switch-tab" data-tab="review">复习 (${STATE.reviewWords.length})</button>
+    ${items}
+    <div class="card btn mb-3 flex items-center" style="border:2px dashed #d4c5b2;background:transparent;" onclick="showRegister()">
+      <span class="text-2xl mr-3">＋</span>
+      <span style="color:#8b5e3c;">注册新用户</span>
     </div>
-    <div class="card p-0" style="overflow:hidden">${wordsHtml}</div>
-    <div class="card">
-      <div class="flex gap-2">
-        <input class="input flex-1" id="add-word" placeholder="英文单词">
-        <input class="input flex-1" id="add-meaning" placeholder="中文含义">
-        <button class="btn btn-primary btn-sm" data-action="add-word">添加</button>
-      </div>
-    </div>
-    <div class="card">
-      <div class="flex gap-2">
-        <span class="text-sm text-secondary flex-1">上传照片识别单词</span>
-        <input type="file" accept="image/*" id="photo-input" style="display:none">
-        <button class="btn btn-outline btn-sm" data-action="pick-photo">📷 选图片</button>
-        <button class="btn btn-primary btn-sm hidden" id="recognize-btn" data-action="recognize-photo">识别</button>
-      </div>
-      <div id="photo-preview" class="mt-2 hidden"></div>
-      <div id="photo-result" class="mt-2 hidden"></div>
+    <div id="registerForm" class="card" style="display:none;">
+      <input id="regName" class="input-field mb-3" placeholder="输入用户名" maxlength="20">
+      <button class="btn w-full py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="doRegister()">注册</button>
     </div>
   </div>`;
 }
 
-// ============ Profile Page ============
-function renderProfile() {
-  const u = STATE.currentUser;
-  if (!u) return '';
-  const lv = calcLevel(u.masteredWords || 0);
-  return `<div class="flex flex-col gap-4">
-    <div class="flex items-center justify-between">
-      <button class="btn btn-outline btn-sm" data-action="back-home">← 返回</button>
-      <span class="font-bold">个人中心</span>
-      <div style="width:60px"></div>
-    </div>
-    <div class="card text-center">
-      <div style="font-size:64px">👤</div>
-      <div class="text-xl font-bold mt-2">${escHtml(u.username)}</div>
-      <div class="text-sm text-secondary mt-1">注册于 ${(u.created_at || '').split('T')[0]}</div>
-    </div>
-    <div class="card text-center">
-      <div class="text-sm text-secondary mb-2">当前等级</div>
-      <div class="text-3xl" style="letter-spacing:3px">${formatLevel(lv)}</div>
-      <div class="text-sm text-secondary mt-1">已掌握 ${u.masteredWords || 0} 个单词</div>
-    </div>
-    <div class="card">
-      <div class="flex justify-around text-center">
-        <div><div class="text-2xl font-bold text-primary">${u.points || 0}</div><div class="text-xs text-secondary">当前积分</div></div>
-        <div><div class="text-2xl font-bold text-success">${STATE.pointsStats?.totalEarned || 0}</div><div class="text-xs text-secondary">累计获取</div></div>
-        <div><div class="text-2xl font-bold text-warning">${STATE.pointsStats?.totalSpent || 0}</div><div class="text-xs text-secondary">累计消耗</div></div>
-      </div>
-    </div>
-    <button class="btn btn-primary btn-block" data-action="goto" data-page="points">💎 积分管理</button>
-    <button class="btn btn-outline btn-block" data-action="logout">切换用户</button>
-  </div>`;
+function showRegister() {
+  document.getElementById('registerForm').style.display = 'block';
 }
 
-// ============ Points Page ============
-function renderPoints() {
-  const historyHtml = STATE.pointsHistory.length === 0
-    ? '<div class="empty-state"><p>暂无积分记录</p></div>'
-    : STATE.pointsHistory.map(r => `<div class="flex items-center justify-between p-3" style="border-bottom:1px solid var(--border)">
-      <div>
-        <span class="font-bold ${r.type === 'earn' ? 'text-success' : 'text-danger'}">${r.type === 'earn' ? '+' : '-'}${r.amount}</span>
-        <span class="text-sm text-secondary ml-2">${escHtml(r.reason || '')}</span>
-      </div>
-      <span class="text-xs text-secondary">${(r.created_at || '').split('T')[0]}</span>
-    </div>`).join('');
-
-  return `<div class="flex flex-col gap-4">
-    <div class="flex items-center justify-between">
-      <button class="btn btn-outline btn-sm" data-action="back-home">← 返回</button>
-      <span class="font-bold">积分管理</span>
-      <div style="width:60px"></div>
-    </div>
-    <div class="card text-center" style="background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff">
-      <div class="text-sm opacity-80">当前积分</div>
-      <div class="text-3xl font-bold mt-1">${STATE.currentUser?.points || 0} 💎</div>
-    </div>
-    <div class="card">
-      <div class="font-bold mb-3">积分兑换</div>
-      <div class="flex gap-2">
-        <input class="input flex-1" id="spend-amount" type="number" placeholder="消耗数量" min="1">
-        <input class="input flex-1" id="spend-reason" placeholder="兑换原因">
-      </div>
-      <button class="btn btn-warning btn-block mt-3" data-action="spend-points">确认兑换</button>
-    </div>
-    <div class="card">
-      <div class="font-bold mb-3">积分明细</div>
-      ${historyHtml}
-    </div>
-  </div>`;
-}
-
-// ============ Event Binding ============
-function bindEvents() {
-  document.querySelectorAll('[data-action]').forEach(el => {
-    el.addEventListener('click', handleAction);
-  });
-
-  // Input bindings
-  const spellingInput = document.getElementById('spelling-input');
-  if (spellingInput) {
-    spellingInput.addEventListener('input', e => { STATE.spellingInput = e.target.value; });
-    spellingInput.focus();
-  }
-  const meaningInput = document.getElementById('meaning-input');
-  if (meaningInput) {
-    meaningInput.addEventListener('input', e => { STATE.meaningInput = e.target.value; });
-    meaningInput.focus();
-  }
-  const countInput = document.getElementById('count-input');
-  if (countInput) {
-    countInput.addEventListener('input', e => { STATE.countInput = parseInt(e.target.value) || 1; });
-  }
-
-  // Canvas
-  const canvas = document.getElementById('handwriting-canvas');
-  if (canvas) {
-    STATE.canvasCtx = canvas.getContext('2d');
-    STATE.canvasCtx.lineWidth = 3;
-    STATE.canvasCtx.lineCap = 'round';
-    STATE.canvasCtx.strokeStyle = '#1e293b';
-    canvas.addEventListener('touchstart', canvasStart);
-    canvas.addEventListener('touchmove', canvasMove);
-    canvas.addEventListener('touchend', canvasEnd);
-    canvas.addEventListener('mousedown', canvasStart);
-    canvas.addEventListener('mousemove', canvasMove);
-    canvas.addEventListener('mouseup', canvasEnd);
-    canvas.addEventListener('mouseleave', canvasEnd);
-  }
-}
-
-function canvasStart(e) {
-  e.preventDefault();
-  STATE.canvasDrawing = true;
-  const pos = getCanvasPos(e);
-  STATE.canvasLastX = pos.x;
-  STATE.canvasLastY = pos.y;
-}
-
-function canvasMove(e) {
-  if (!STATE.canvasDrawing) return;
-  e.preventDefault();
-  const pos = getCanvasPos(e);
-  const ctx = STATE.canvasCtx;
-  ctx.beginPath();
-  ctx.moveTo(STATE.canvasLastX, STATE.canvasLastY);
-  ctx.lineTo(pos.x, pos.y);
-  ctx.stroke();
-  STATE.canvasLastX = pos.x;
-  STATE.canvasLastY = pos.y;
-}
-
-function canvasEnd(e) {
-  STATE.canvasDrawing = false;
-}
-
-function getCanvasPos(e) {
-  const canvas = document.getElementById('handwriting-canvas');
-  const rect = canvas.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-  return { x: clientX - rect.left, y: clientY - rect.top };
-}
-
-async function handleAction(e) {
-  const action = e.currentTarget.dataset.action;
-  const page = e.currentTarget.dataset.page;
-  const bank = e.currentTarget.dataset.bank;
-  const tab = e.currentTarget.dataset.tab;
-  const id = e.currentTarget.dataset.id;
-  const word = e.currentTarget.dataset.word;
-  const index = e.currentTarget.dataset.index;
-
-  switch (action) {
-    case 'register': await doRegister(); break;
-    case 'select-user': await doSelectUser(parseInt(id)); break;
-    case 'logout': STATE.currentUser = null; localStorage.removeItem('currentUserId'); STATE.page = 'login'; await loadUsers(); render(); break;
-    case 'goto': STATE.page = page; if (page === 'profile') await loadProfileStats(); if (page === 'points') await loadPointsData(); if (page === 'vocabulary') await loadVocabData(); render(); break;
-    case 'start-dictation': await startDictation(bank); break;
-    case 'begin-dictation': await beginDictation(); break;
-    case 'replay': await playCurrentWord(); break;
-    case 'start-spelling': STATE.phase = 'spelling'; render(); break;
-    case 'submit-spelling': await submitSpelling(); break;
-    case 'submit-meaning': await submitMeaning(); break;
-    case 'dont-know': await dontKnow(); break;
-    case 'next-word': await nextWord(); break;
-    case 'back-home': STATE.page = 'home'; await refreshUser(); render(); break;
-    case 'switch-tab': STATE.vocabTab = tab; render(); break;
-    case 'delete-word': await deleteWord(word, parseInt(index)); break;
-    case 'add-word': await addWord(); break;
-    case 'pick-photo': pickPhoto(); break;
-    case 'recognize-photo': await recognizePhoto(); break;
-    case 'spend-points': await spendPoints(); break;
-    case 'open-canvas': STATE.showCanvas = true; render(); break;
-    case 'close-canvas': STATE.showCanvas = false; render(); break;
-    case 'clear-canvas': clearCanvas(); break;
-    case 'submit-canvas': await submitCanvas(); break;
-  }
-}
-
-// ============ Actions ============
-async function doRegister() {
-  const input = document.getElementById('reg-username');
-  const username = input?.value?.trim();
-  if (!username) return showToast('请输入用户名');
+async function selectUser(id) {
   try {
-    const res = await api('/api/growth/register', { method: 'POST', body: JSON.stringify({ username }) });
+    const res = await api('/api/growth/user/' + id);
     if (res.code === 200) {
-      showToast('注册成功！');
-      STATE.currentUser = res.data;
+      S.currentUser = res.data;
+      localStorage.setItem('currentUserId', id);
+      loadWordBank();
+      S.page = 'home';
+      render();
+    }
+  } catch (e) {
+    toast('加载用户失败');
+  }
+}
+
+async function doRegister() {
+  const name = document.getElementById('regName').value.trim();
+  if (!name) { toast('请输入用户名'); return; }
+  try {
+    const res = await api('/api/growth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username: name }),
+    });
+    if (res.code === 200) {
+      toast('注册成功！');
+      S.currentUser = res.data;
       localStorage.setItem('currentUserId', res.data.id);
-      await loadVocabData();
-      STATE.page = 'home';
+      loadWordBank();
+      S.page = 'home';
       render();
     } else {
-      showToast(res.msg || '注册失败');
+      toast(res.msg || '注册失败');
     }
-  } catch (err) { showToast('网络错误'); }
+  } catch (e) {
+    toast('网络错误');
+  }
 }
 
-async function doSelectUser(userId) {
-  try {
-    const res = await api(`/api/growth/user/${userId}`);
-    if (res.code === 200) {
-      STATE.currentUser = res.data;
-      localStorage.setItem('currentUserId', userId);
-      await loadVocabData();
-      STATE.page = 'home';
-      render();
-    }
-  } catch (err) { showToast('网络错误'); }
+// ==================== HOME ====================
+function renderHome() {
+  const u = S.currentUser;
+  if (!u) { S.page = 'login'; return render(); }
+  const levelIcon = calcLevel(u.mastered_words || 0);
+  const totalWords = S.newWords.length + S.reviewWords.length;
+
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;padding-bottom:100px;">
+    <!-- User Card -->
+    <div class="card mb-4" style="background:linear-gradient(135deg,#fdf6f0,#faf0e6);">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="text-lg font-bold" style="color:#6b4c2e;">${esc(u.username)}</div>
+          <div class="text-2xl mt-1">${levelIcon}</div>
+        </div>
+        <div class="text-right">
+          <div class="text-3xl font-bold" style="color:#8b5e3c;">${u.points ?? 0}</div>
+          <div class="text-xs text-gray-500">积分</div>
+        </div>
+      </div>
+      <div class="flex gap-2 text-xs text-gray-500">
+        <span>掌握 ${u.masteredWords || 0} 词</span>
+        <span>·</span>
+        <span>词库 ${totalWords} 词</span>
+        <span>·</span>
+        <span>新词 ${S.newWords.length}</span>
+        <span>复习 ${S.reviewWords.length}</span>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div class="card btn text-center py-4" onclick="startDictation()">
+        <div class="text-3xl mb-1">🎧</div>
+        <div class="font-semibold text-sm">开始听写</div>
+      </div>
+      <div class="card btn text-center py-4" onclick="S.page='upload';render();">
+        <div class="text-3xl mb-1">📷</div>
+        <div class="font-semibold text-sm">拍照识词</div>
+      </div>
+      <div class="card btn text-center py-4" onclick="S.page='profile';render();">
+        <div class="text-3xl mb-1">🏆</div>
+        <div class="font-semibold text-sm">养成详情</div>
+      </div>
+      <div class="card btn text-center py-4" onclick="S.page='history';render();">
+        <div class="text-3xl mb-1">📋</div>
+        <div class="font-semibold text-sm">积分明细</div>
+      </div>
+    </div>
+
+    <!-- Word Bank Stats -->
+    <div class="card">
+      <div class="font-semibold mb-3" style="color:#6b4c2e;">词库概览</div>
+      <div class="flex justify-between text-sm">
+        <span class="text-gray-500">新单词</span>
+        <span class="font-semibold">${S.newWords.length} 个</span>
+      </div>
+      <div class="flex justify-between text-sm mt-2">
+        <span class="text-gray-500">复习中</span>
+        <span class="font-semibold">${S.reviewWords.length} 个</span>
+      </div>
+      <div class="flex justify-between text-sm mt-2 pt-2 border-t" style="border-color:#e2d5c8;">
+        <span class="text-gray-500">合计</span>
+        <span class="font-semibold" style="color:#8b5e3c;">${totalWords} 个</span>
+      </div>
+      ${totalWords > 0 ? `
+      <button class="btn w-full mt-3 py-2 rounded-lg text-sm border" style="border-color:#e2d5c8;color:#999;" onclick="resetWordBank()">重置词库</button>
+      ` : `
+      <button class="btn w-full mt-3 py-2 rounded-lg text-sm text-white font-semibold" style="background:#8b5e3c;" onclick="reloadInitialWords()">导入初始词库 (${INITIAL_WORDS.length}词)</button>
+      `}
+    </div>
+
+    <!-- Switch User -->
+    <button class="btn w-full mt-4 py-2 rounded-xl text-sm text-gray-400" onclick="switchUser()">切换用户</button>
+  </div>`;
 }
 
-async function refreshUser() {
-  if (!STATE.currentUser?.id) return;
-  try {
-    const res = await api(`/api/growth/user/${STATE.currentUser.id}`);
-    if (res.code === 200) STATE.currentUser = res.data;
-  } catch (e) {}
-}
-
-async function loadUsers() {
-  try {
-    const res = await api('/api/growth/users');
-    if (res.code === 200) STATE.users = res.data || [];
-  } catch (e) {}
-}
-
-async function loadVocabData() {
-  try {
-    const [newRes, reviewRes] = await Promise.all([
-      api('/api/dictation/get-new-words', { method: 'POST' }),
-      api('/api/dictation/get-review-words', { method: 'POST' }),
-    ]);
-    STATE.newWords = newRes?.data?.words || [];
-    STATE.reviewWords = reviewRes?.data?.words || [];
-  } catch (e) {}
-}
-
-async function loadProfileStats() {
-  if (!STATE.currentUser?.id) return;
-  try {
-    const res = await api(`/api/growth/stats/${STATE.currentUser.id}`);
-    if (res.code === 200) STATE.pointsStats = res.data;
-  } catch (e) {}
-}
-
-async function loadPointsData() {
-  if (!STATE.currentUser?.id) return;
-  try {
-    const [histRes, statsRes] = await Promise.all([
-      api(`/api/growth/history/${STATE.currentUser.id}`),
-      api(`/api/growth/stats/${STATE.currentUser.id}`),
-    ]);
-    STATE.pointsHistory = histRes?.data || [];
-    STATE.pointsStats = statsRes?.data || null;
-  } catch (e) {}
-}
-
-async function startDictation(bank) {
-  STATE.bankType = bank;
-  await loadVocabData();
-  const words = bank === 'new' ? STATE.newWords : STATE.reviewWords;
-  if (words.length === 0) return showToast('词库为空，请先添加单词');
-  STATE.wordList = [...words];
-  STATE.currentIndex = 0;
-  STATE.totalCount = 0;
-  STATE.phase = 'count-pick';
-  STATE.countInput = Math.min(10, words.length);
-  STATE.page = 'dictation';
+function switchUser() {
+  S.currentUser = null;
+  localStorage.removeItem('currentUserId');
+  S.newWords = [];
+  S.reviewWords = [];
+  S.page = 'login';
   render();
 }
 
-async function beginDictation() {
-  const total = STATE.wordList.length;
-  let count = STATE.countInput;
-  if (total <= 10) count = total;
-  count = Math.min(count, total);
-  count = Math.max(1, count);
+function resetWordBank() {
+  if (confirm('确定要清空并重置词库吗？')) {
+    S.newWords = JSON.parse(JSON.stringify(INITIAL_WORDS));
+    S.reviewWords = [];
+    saveWordBank();
+    render();
+    toast('词库已重置');
+  }
+}
 
-  // Take first 'count' words
-  STATE.wordList = STATE.wordList.slice(0, count);
-  STATE.totalCount = count;
-  STATE.currentIndex = 0;
-  STATE.phase = 'playing';
-  STATE.spellingInput = '';
-  STATE.meaningInput = '';
+function reloadInitialWords() {
+  S.newWords = JSON.parse(JSON.stringify(INITIAL_WORDS));
+  S.reviewWords = [];
+  saveWordBank();
   render();
-  await playCurrentWord();
+  toast('已导入 ' + INITIAL_WORDS.length + ' 个单词');
+}
+
+// ==================== DICTATION ====================
+function startDictation() {
+  const allWords = [...S.newWords, ...S.reviewWords];
+  if (allWords.length === 0) { toast('词库为空，请先拍照识词或导入初始词库'); return; }
+
+  if (allWords.length > 10) {
+    // Show count selector
+    S.page = 'dictCountSelect';
+    render();
+    return;
+  }
+
+  S.dictCount = allWords.length;
+  beginDictation(allWords.slice(0, S.dictCount));
+}
+
+function beginDictation(queue) {
+  S.dictQueue = queue;
+  S.dictIndex = 0;
+  S.page = 'dictation';
+  render();
+  setTimeout(() => playCurrentWord(), 500);
 }
 
 async function playCurrentWord() {
-  const w = STATE.wordList[STATE.currentIndex];
-  if (!w) return;
-  STATE.phase = 'playing';
-  render();
-  try {
-    const res = await api('/api/dictation/speak-word-both', { method: 'POST', body: JSON.stringify({ word: w.word }) });
-    const data = res?.data;
-    if (data?.usAudioUrl) {
-      await playAudio(data.usAudioUrl);
-    }
-    if (data?.ukAudioUrl && data.ukAudioUrl !== data.usAudioUrl) {
-      await playAudio(data.ukAudioUrl);
-    }
-  } catch (err) {
-    console.error('playWord error:', err);
-    showToast('发音获取失败，请重试');
+  if (S.dictIndex >= S.dictQueue.length) {
+    S.page = 'home';
+    render();
+    toast('听写完成！');
+    return;
+  }
+  S.currentWord = S.dictQueue[S.dictIndex];
+  S.phase = 'playing';
+  S.correctSpell = false;
+  S.correctMeaning = false;
+  renderDictContent();
+  await speakWord(S.currentWord.word);
+}
+
+function renderDictCountSelect() {
+  const total = S.newWords.length + S.reviewWords.length;
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="card text-center">
+      <div class="text-4xl mb-3">🔢</div>
+      <h2 class="text-lg font-bold mb-1" style="color:#6b4c2e;">选择听写数量</h2>
+      <p class="text-gray-500 text-sm mb-4">词库共 ${total} 个单词</p>
+      <input id="dictCountInput" type="number" class="input-field text-center text-2xl font-bold mb-4" value="10" min="1" max="${total}" style="width:120px;margin:0 auto;display:block;">
+      <div class="flex gap-3 justify-center mb-4">
+        ${[5,10,15,20].map(n => n <= total ? `<button class="btn px-4 py-2 rounded-lg border text-sm" style="border-color:#e2d5c8;" onclick="document.getElementById('dictCountInput').value=${n}">${n}个</button>` : '').join('')}
+      </div>
+      <button class="btn w-full py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="confirmDictCount()">开始听写</button>
+    </div>
+  </div>`;
+}
+
+function confirmDictCount() {
+  const count = parseInt(document.getElementById('dictCountInput').value) || 10;
+  S.dictCount = Math.min(count, S.newWords.length + S.reviewWords.length);
+  const allWords = [...S.newWords, ...S.reviewWords];
+  beginDictation(allWords.slice(0, S.dictCount));
+}
+
+function renderDictation() {
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="flex items-center justify-between mb-4">
+      <button class="btn text-sm" style="color:#8b5e3c;" onclick="S.page='home';render();">← 返回</button>
+      <span class="text-sm text-gray-500">${S.dictIndex + 1} / ${S.dictQueue.length}</span>
+      <div style="width:40px;"></div>
+    </div>
+    <div class="w-full bg-gray-200 rounded-full h-2 mb-4">
+      <div class="h-2 rounded-full" style="width:${((S.dictIndex)/S.dictQueue.length*100)}%;background:#8b5e3c;"></div>
+    </div>
+    <div id="dictContent"></div>
+  </div>`;
+}
+
+function renderDictContent() {
+  const el = document.getElementById('dictContent');
+  if (!el) return;
+  const w = S.currentWord;
+  if (!w) { el.innerHTML = '<div class="text-center text-gray-500">加载中...</div>'; return; }
+
+  if (S.phase === 'playing') {
+    el.innerHTML = `<div class="card text-center py-8">
+      <div class="text-5xl mb-4">🔊</div>
+      <div class="text-gray-500 mb-4">仔细听，然后拼写单词</div>
+      <button class="btn px-6 py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="replayWord()">🔊 再听一次</button>
+      <div class="mt-4">
+        <input id="spellInput" class="input-field text-center text-xl" placeholder="输入单词拼写" autocomplete="off" autocapitalize="off" onkeydown="if(event.key==='Enter')checkSpell()">
+      </div>
+      <button class="btn w-full mt-3 py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="checkSpell()">确认拼写</button>
+      <button class="btn w-full mt-2 py-2 rounded-xl text-sm" style="color:#999;" onclick="skipWord()">跳过 (显示答案)</button>
+    </div>`;
+  } else if (S.phase === 'spelling') {
+    el.innerHTML = `<div class="card text-center py-8">
+      <div class="text-5xl mb-4">${S.correctSpell ? '✅' : '❌'}</div>
+      <div class="text-xl font-bold mb-1" style="color:${S.correctSpell?'#4caf50':'#e53935'};">${esc(w.word)}</div>
+      <div class="text-gray-500 mb-2">${esc(w.meanings?.[0] || '')}</div>
+      ${!S.correctSpell ? `<div class="text-sm text-gray-400 mb-3">你的拼写不正确，已显示正确答案</div>` : ''}
+      <div class="text-gray-500 mb-3">请输入中文含义</div>
+      <input id="meaningInput" class="input-field text-center text-xl" placeholder="输入中文含义" autocomplete="off" onkeydown="if(event.key==='Enter')checkMeaning()">
+      <button class="btn w-full mt-3 py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="checkMeaning()">确认含义</button>
+      <button class="btn w-full mt-2 py-2 rounded-xl text-sm" style="color:#999;" onclick="skipMeaning()">跳过</button>
+    </div>`;
+  } else if (S.phase === 'meaning') {
+    el.innerHTML = `<div class="card text-center py-8">
+      <div class="text-5xl mb-4">${S.correctMeaning ? '🎉' : '📝'}</div>
+      <div class="text-lg font-bold mb-1">${esc(w.word)}</div>
+      <div class="text-gray-500 mb-2">${esc(w.meanings?.[0] || '')}</div>
+      <div class="text-sm ${S.correctMeaning ? 'text-green-600' : 'text-red-500'} mb-3">
+        ${S.correctMeaning ? '含义正确！' : '含义不正确，已显示正确答案'}
+      </div>
+      ${(S.correctSpell && S.correctMeaning) ? `<div class="text-green-600 font-semibold mb-3">🎉 完全掌握！+1积分</div>` : ''}
+      <button class="btn w-full py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="nextWord()">
+        ${S.dictIndex < S.dictQueue.length - 1 ? '下一个单词 →' : '完成听写'}
+      </button>
+    </div>`;
   }
 }
 
-function playAudio(url) {
-  return new Promise((resolve, reject) => {
-    const audio = new Audio(url);
-    audio.play().then(() => {
-      audio.onended = resolve;
-      audio.onerror = (e) => {
-        console.error('Audio error:', e);
-        reject(e);
-      };
-    }).catch(reject);
-    setTimeout(() => reject(new Error('timeout')), 15000);
-  });
+function replayWord() {
+  if (S.currentWord) speakWord(S.currentWord.word);
 }
 
-async function submitSpelling() {
-  const w = STATE.wordList[STATE.currentIndex];
-  if (!w) return;
-  const answer = STATE.spellingInput.trim();
-  if (!answer) return showToast('请输入拼写');
+async function checkSpell() {
+  const input = (document.getElementById('spellInput')?.value || '').trim().toLowerCase();
+  const correct = S.currentWord.word.toLowerCase();
+  S.correctSpell = (input === correct);
+  S.phase = 'spelling';
+  renderDictContent();
+}
 
-  // Simple spelling check
-  const correct = answer.toLowerCase().replace(/\s+/g, '') === w.word.toLowerCase().replace(/\s+/g, '');
-  if (correct) {
-    STATE.phase = 'meaning';
-    STATE.meaningInput = '';
-    render();
-  } else {
-    showToast('拼写错误，请重试');
-    STATE.spellingInput = '';
-    render();
+async function checkMeaning() {
+  const input = (document.getElementById('meaningInput')?.value || '').trim();
+  const meanings = S.currentWord.meanings || [];
+  S.correctMeaning = meanings.some(m => input.includes(m) || m.includes(input));
+  S.phase = 'meaning';
+
+  // Remove from word bank if both correct
+  if (S.correctSpell && S.correctMeaning) {
+    removeWordFromBank(S.currentWord.word);
   }
-}
 
-async function submitMeaning() {
-  const w = STATE.wordList[STATE.currentIndex];
-  if (!w) return;
-  const answer = STATE.meaningInput.trim();
-  if (!answer) return showToast('请输入中文含义');
-
-  try {
-    const res = await api('/api/dictation/check-answer', {
-      method: 'POST',
-      body: JSON.stringify({ word: w.word, correctMeanings: w.meanings, userAnswer: answer }),
-    });
-    if (res?.data?.isCorrect) {
-      // Both spelling and meaning correct → earn points + remove from bank
-      await earnPoints(w.word);
-      await api('/api/dictation/remove-from-bank', {
+  // Earn points
+  if (S.currentUser) {
+    try {
+      const res = await api('/api/growth/earn', {
         method: 'POST',
-        body: JSON.stringify({ word: w.word, bank: STATE.bankType }),
+        body: JSON.stringify({ userId: S.currentUser.id, word: S.currentWord.word }),
       });
-      STATE.phase = 'correct';
-    } else {
-      // Wrong → add to review
-      await api('/api/dictation/add-to-review', {
-        method: 'POST',
-        body: JSON.stringify({ word: w.word, meanings: w.meanings }),
-      });
-      STATE.phase = 'wrong';
-    }
-    render();
-  } catch (err) {
-    showToast('检查失败，请重试');
-  }
-}
-
-async function earnPoints(word) {
-  if (!STATE.currentUser?.id) return;
-  try {
-    const res = await api('/api/growth/earn', {
-      method: 'POST',
-      body: JSON.stringify({ userId: STATE.currentUser.id, word }),
-    });
-    if (res.code === 200 && res.data) {
-      STATE.currentUser.points = res.data.points;
-      STATE.currentUser.masteredWords = res.data.masteredWords;
-      if (res.data.upgradeBonus > 0) {
-        showToast(`🎉 ${res.data.upgradeReason}！额外奖励${res.data.upgradeBonus}积分`);
+      if (res.code === 200) {
+        const earnData = res.data;
+        // Refresh user info
+        const r2 = await api('/api/growth/user/' + S.currentUser.id);
+        if (r2.code === 200) S.currentUser = r2.data;
+        // Check upgrade bonus
+        if (earnData.upgradeBonus && earnData.upgradeBonus > 0) {
+          setTimeout(() => toast('🎉 升级奖励 +' + earnData.upgradeBonus + ' 积分！(' + earnData.upgradeReason + ')'), 500);
+        }
       }
-    }
-  } catch (e) {}
-}
-
-async function dontKnow() {
-  const w = STATE.wordList[STATE.currentIndex];
-  if (!w) return;
-  await api('/api/dictation/add-to-review', {
-    method: 'POST',
-    body: JSON.stringify({ word: w.word, meanings: w.meanings }),
-  });
-  STATE.phase = 'wrong';
-  render();
-}
-
-async function nextWord() {
-  STATE.currentIndex++;
-  STATE.spellingInput = '';
-  STATE.meaningInput = '';
-  if (STATE.currentIndex >= STATE.totalCount) {
-    STATE.phase = 'finished';
-    render();
-  } else {
-    STATE.phase = 'playing';
-    render();
-    await playCurrentWord();
+    } catch (e) { console.error('earn error:', e); }
   }
+
+  renderDictContent();
 }
 
-async function deleteWord(word, index) {
-  const bank = STATE.vocabTab;
-  await api('/api/dictation/remove-word', {
-    method: 'POST',
-    body: JSON.stringify({ word, bank }),
-  });
-  if (bank === 'new') STATE.newWords.splice(index, 1);
-  else STATE.reviewWords.splice(index, 1);
-  render();
+function removeWordFromBank(word) {
+  const wl = word.toLowerCase();
+  S.newWords = S.newWords.filter(w => w.word.toLowerCase() !== wl);
+  S.reviewWords = S.reviewWords.filter(w => w.word.toLowerCase() !== wl);
+  saveWordBank();
 }
 
-async function addWord() {
-  const wordEl = document.getElementById('add-word');
-  const meaningEl = document.getElementById('add-meaning');
-  const word = wordEl?.value?.trim();
-  const meaning = meaningEl?.value?.trim();
-  if (!word || !meaning) return showToast('请填写单词和含义');
-  await api('/api/dictation/add-word', {
-    method: 'POST',
-    body: JSON.stringify({ word, meanings: [meaning], bank: STATE.vocabTab }),
-  });
-  wordEl.value = '';
-  meaningEl.value = '';
-  await loadVocabData();
-  render();
+function skipWord() {
+  S.correctSpell = false;
+  S.phase = 'spelling';
+  renderDictContent();
 }
 
-let photoImageUrl = '';
-function pickPhoto() {
-  const input = document.getElementById('photo-input');
-  input.click();
-  input.onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    // Preview
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      document.getElementById('photo-preview').innerHTML = `<img src="${ev.target.result}" style="max-width:100%;max-height:200px;border-radius:10px">`;
-      document.getElementById('photo-preview').classList.remove('hidden');
-      document.getElementById('recognize-btn').classList.remove('hidden');
-    };
-    reader.readAsDataURL(file);
-    // Upload
+function skipMeaning() {
+  S.correctMeaning = false;
+  S.phase = 'meaning';
+  renderDictContent();
+}
+
+function nextWord() {
+  S.dictIndex++;
+  if (S.dictIndex >= S.dictQueue.length) {
+    S.page = 'home';
+    render();
+    toast('听写完成！');
+    return;
+  }
+  setTimeout(() => playCurrentWord(), 300);
+}
+
+// ==================== UPLOAD ====================
+function renderUpload() {
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="flex items-center mb-4">
+      <button class="btn text-sm" style="color:#8b5e3c;" onclick="S.page='home';render();">← 返回</button>
+      <span class="ml-3 font-semibold" style="color:#6b4c2e;">拍照识别单词</span>
+    </div>
+    <div class="card text-center py-8 mb-4">
+      <div class="text-5xl mb-3">📷</div>
+      <div class="text-gray-500 mb-4">拍摄或选择单词表照片，AI 自动识别单词</div>
+      <input type="file" id="imageInput" accept="image/*" capture="environment" style="display:none;" onchange="handleImageSelect(event)">
+      <button class="btn w-full py-3 rounded-xl text-white font-semibold mb-2" style="background:#8b5e3c;" onclick="document.getElementById('imageInput').click()">📷 拍照 / 选图片</button>
+    </div>
+    <div id="uploadResult"></div>
+    <div class="card">
+      <div class="font-semibold mb-2" style="color:#6b4c2e;">当前词库</div>
+      <div class="text-sm text-gray-500">新单词 ${S.newWords.length} · 复习 ${S.reviewWords.length}</div>
+    </div>
+  </div>`;
+}
+
+async function handleImageSelect(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const resultEl = document.getElementById('uploadResult');
+  resultEl.innerHTML = '<div class="card text-center py-4"><div class="text-gray-500">识别中...</div></div>';
+
+  try {
+    // Upload image
     const formData = new FormData();
     formData.append('image', file);
-    try {
-      const res = await fetch('/api/dictation/upload-image', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.code === 200) {
-        photoImageUrl = data.data.imageUrl;
-        showToast('图片上传成功');
-      } else {
-        showToast('上传失败');
-      }
-    } catch (err) {
-      showToast('上传失败');
-    }
-  };
-}
+    const uploadRes = await apiUpload('/api/dictation/upload-image', formData);
+    if (uploadRes.code !== 200) { resultEl.innerHTML = '<div class="card text-center py-4 text-red-500">上传失败</div>'; return; }
 
-async function recognizePhoto() {
-  if (!photoImageUrl) return showToast('请先选择图片');
-  const btn = document.getElementById('recognize-btn');
-  btn.disabled = true;
-  btn.textContent = '识别中...';
-  try {
-    const res = await api('/api/dictation/recognize-all-words', {
+    // Recognize words
+    const recRes = await api('/api/dictation/recognize-all-words', {
       method: 'POST',
-      body: JSON.stringify({ imageUrl: photoImageUrl }),
+      body: JSON.stringify({ imageUrl: uploadRes.data.imageUrl }),
     });
-    if (res.code === 200 && res.data?.words?.length > 0) {
-      const words = res.data.words;
-      document.getElementById('photo-result').innerHTML = `<div class="text-success font-bold mt-2">✅ 识别到 ${words.length} 个单词</div>
-        <div class="text-sm text-secondary">${words.map(w => w.word).join('、')}</div>`;
-      document.getElementById('photo-result').classList.remove('hidden');
-      await loadVocabData();
-      showToast(`识别到 ${words.length} 个单词，已追加到词库`);
-    } else {
-      document.getElementById('photo-result').innerHTML = '<div class="text-danger mt-2">未识别到单词</div>';
-      document.getElementById('photo-result').classList.remove('hidden');
+    if (recRes.code !== 200 || !recRes.data?.words?.length) {
+      resultEl.innerHTML = '<div class="card text-center py-4 text-red-500">未识别到单词</div>';
+      return;
     }
-  } catch (err) {
-    showToast('识别失败');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '识别';
+
+    // Add to front of newWords (append mode)
+    const recognized = recRes.data.words.map(w => ({
+      word: cleanWord(w.word || ''),
+      meanings: w.meanings || [w.meaning || ''],
+    })).filter(w => w.word && w.word.length >= 1);
+
+    // Deduplicate and add to front
+    const existingWords = new Set(S.newWords.map(w => w.word.toLowerCase()));
+    const toAdd = recognized.filter(w => !existingWords.has(w.word.toLowerCase()));
+    S.newWords = [...toAdd, ...S.newWords];
+    saveWordBank();
+
+    resultEl.innerHTML = `<div class="card text-center py-4">
+      <div class="text-green-600 font-semibold text-lg mb-2">✅ 识别成功！</div>
+      <div class="text-gray-500 mb-2">新增 ${toAdd.length} 个单词</div>
+      <div class="flex flex-wrap gap-1 justify-center">
+        ${toAdd.slice(0,20).map(w => `<span class="px-2 py-1 rounded text-xs" style="background:#fdf6f0;">${esc(w.word)}</span>`).join('')}
+        ${toAdd.length > 20 ? `<span class="text-xs text-gray-400">等${toAdd.length}个</span>` : ''}
+      </div>
+      <button class="btn mt-3 px-6 py-2 rounded-lg text-sm text-white" style="background:#8b5e3c;" onclick="S.page='home';render();">返回首页</button>
+    </div>`;
+  } catch (e) {
+    resultEl.innerHTML = '<div class="card text-center py-4 text-red-500">识别出错，请重试</div>';
   }
 }
 
-async function spendPoints() {
-  const amountEl = document.getElementById('spend-amount');
-  const reasonEl = document.getElementById('spend-reason');
-  const amount = parseInt(amountEl?.value);
-  const reason = reasonEl?.value?.trim();
-  if (!amount || amount <= 0) return showToast('请输入有效数量');
-  if (!reason) return showToast('请输入兑换原因');
+function cleanWord(w) {
+  return w.replace(/[\[\]【】\(\)（）\"\',.。，；;:：\!！\?？\d]/g, '').trim();
+}
+
+// ==================== PROFILE ====================
+function renderProfile() {
+  const u = S.currentUser;
+  if (!u) { S.page = 'login'; return render(); }
+  const levelIcon = calcLevel(u.mastered_words || 0);
+
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="flex items-center mb-4">
+      <button class="btn text-sm" style="color:#8b5e3c;" onclick="S.page='home';render();">← 返回</button>
+      <span class="ml-3 font-semibold" style="color:#6b4c2e;">养成详情</span>
+    </div>
+    <div class="card text-center mb-4" style="background:linear-gradient(135deg,#fdf6f0,#faf0e6);">
+      <div class="text-lg font-bold mb-2" style="color:#6b4c2e;">${esc(u.username)}</div>
+      <div class="text-5xl mb-2">${levelIcon || '0⭐'}</div>
+      <div class="text-sm text-gray-500">掌握 ${u.masteredWords || 0} 个单词</div>
+      <div class="text-3xl font-bold mt-3" style="color:#8b5e3c;">${u.points || 0}</div>
+      <div class="text-xs text-gray-500">可用积分</div>
+    </div>
+    <div class="card mb-4">
+      <div class="font-semibold mb-3" style="color:#6b4c2e;">积分消耗</div>
+      <div class="flex gap-2 mb-3">
+        <input id="spendAmount" type="number" class="input-field flex-1" placeholder="消耗积分数" min="1">
+      </div>
+      <input id="spendNote" class="input-field mb-3" placeholder="备注（如：兑换贴纸）">
+      <button class="btn w-full py-3 rounded-xl text-white font-semibold" style="background:#8b5e3c;" onclick="doSpend()">确认消耗</button>
+    </div>
+    <div class="card">
+      <div class="font-semibold mb-2" style="color:#6b4c2e;">等级规则</div>
+      <div class="text-sm text-gray-500 space-y-1">
+        <div>⭐ = 1个单词</div>
+        <div>🌙 = 10⭐（升级奖励+2积分）</div>
+        <div>☀️ = 10🌙（升级奖励+20积分）</div>
+        <div>👧 = 10☀️（升级奖励+200积分）</div>
+        <div>👸 = 10👧（升级奖励+2000积分）</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doSpend() {
+  const amount = parseInt(document.getElementById('spendAmount')?.value) || 0;
+  const note = (document.getElementById('spendNote')?.value || '').trim();
+  if (amount <= 0) { toast('请输入消耗积分'); return; }
+  if (amount > (S.currentUser?.points || 0)) { toast('积分不足'); return; }
   try {
     const res = await api('/api/growth/spend', {
       method: 'POST',
-      body: JSON.stringify({ userId: STATE.currentUser.id, amount, reason }),
+      body: JSON.stringify({ userId: S.currentUser.id, amount, reason: note }),
     });
     if (res.code === 200) {
-      STATE.currentUser.points = res.data.points;
-      amountEl.value = '';
-      reasonEl.value = '';
-      await loadPointsData();
-      showToast('兑换成功！');
+      S.currentUser.points = res.data.points;
+      toast('已消耗 ' + amount + ' 积分');
       render();
     } else {
-      showToast(res.msg || '兑换失败');
+      toast(res.msg || '操作失败');
     }
-  } catch (err) { showToast('网络错误'); }
-}
-
-function clearCanvas() {
-  const canvas = document.getElementById('handwriting-canvas');
-  if (canvas && STATE.canvasCtx) {
-    STATE.canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+  } catch (e) {
+    toast('网络错误');
   }
 }
 
-async function submitCanvas() {
-  const canvas = document.getElementById('handwriting-canvas');
-  if (!canvas) return;
-  const dataUrl = canvas.toDataURL('image/png');
-  // Upload canvas image
-  const blob = await (await fetch(dataUrl)).blob();
-  const formData = new FormData();
-  formData.append('image', blob, 'handwriting.png');
-  try {
-    const uploadRes = await fetch('/api/dictation/upload-image', { method: 'POST', body: formData });
-    const uploadData = await uploadRes.json();
-    if (uploadData.code !== 200) return showToast('上传失败');
-    const recRes = await api('/api/dictation/recognize-handwriting', {
-      method: 'POST',
-      body: JSON.stringify({ imageUrl: uploadData.data.imageUrl }),
-    });
-    if (recRes.code === 200 && recRes.data?.text) {
-      if (STATE.phase === 'spelling') {
-        STATE.spellingInput = recRes.data.text;
-      } else if (STATE.phase === 'meaning') {
-        STATE.meaningInput = recRes.data.text;
-      }
-      STATE.showCanvas = false;
-      clearCanvas();
-      render();
-    } else {
-      showToast('手写识别失败');
-    }
-  } catch (err) { showToast('识别失败'); }
+// ==================== HISTORY ====================
+function renderHistory() {
+  return `<div class="page active" style="padding:24px 16px;max-width:480px;margin:0 auto;">
+    <div class="flex items-center mb-4">
+      <button class="btn text-sm" style="color:#8b5e3c;" onclick="S.page='home';render();">← 返回</button>
+      <span class="ml-3 font-semibold" style="color:#6b4c2e;">积分明细</span>
+    </div>
+    <div id="historyContent"><div class="text-center text-gray-500 py-8">加载中...</div></div>
+  </div>`;
 }
 
-function escHtml(str) {
+// ==================== EVENTS ====================
+function bindEvents() {
+  if (S.page === 'history') loadHistory();
+  if (S.page === 'dictCountSelect') {
+    const app = document.getElementById('app');
+    app.innerHTML = renderDictCountSelect();
+  }
+}
+
+async function loadHistory() {
+  if (!S.currentUser) return;
+  try {
+    const res = await api('/api/growth/history/' + S.currentUser.id);
+    const el = document.getElementById('historyContent');
+    if (!el) return;
+    if (res.code === 200 && res.data?.length > 0) {
+      el.innerHTML = res.data.map(h => `
+        <div class="card mb-2 flex justify-between items-center">
+          <div>
+            <div class="text-sm ${h.type === 'earn' ? 'text-green-600' : 'text-red-500'} font-semibold">
+              ${h.type === 'earn' ? '+' : '-'}${h.amount} 积分
+            </div>
+            <div class="text-xs text-gray-400">${h.reason || ''}</div>
+          </div>
+          <div class="text-xs text-gray-400">${new Date(h.created_at).toLocaleDateString()}</div>
+        </div>
+      `).join('');
+    } else {
+      el.innerHTML = '<div class="text-center text-gray-500 py-8">暂无记录</div>';
+    }
+  } catch (e) {
+    const el = document.getElementById('historyContent');
+    if (el) el.innerHTML = '<div class="text-center text-gray-500 py-8">加载失败</div>';
+  }
+}
+
+// ==================== UTIL ====================
+function esc(str) {
   if (!str) return '';
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ============ Init ============
+// ==================== INIT ====================
 async function init() {
-  await loadUsers();
-  // Restore session
+  // Load users
+  try {
+    const res = await api('/api/growth/users');
+    if (res.code === 200) S.users = res.data || [];
+  } catch (e) { console.error('load users error:', e); }
+
+  // Check saved user
   const savedId = localStorage.getItem('currentUserId');
   if (savedId) {
     try {
-      const res = await api(`/api/growth/user/${savedId}`);
+      const res = await api('/api/growth/user/' + savedId);
       if (res.code === 200) {
-        STATE.currentUser = res.data;
-        await loadVocabData();
-        STATE.page = 'home';
+        S.currentUser = res.data;
+        loadWordBank();
+        S.page = 'home';
         render();
         return;
       }
     } catch (e) {}
   }
-  STATE.page = 'login';
+
+  S.page = 'login';
   render();
 }
 
