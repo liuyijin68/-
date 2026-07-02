@@ -208,12 +208,14 @@ function computeLevel(u) {
 function initWordBanks(uid) {
   let nw = loadBank(uid, 'new_words', null);
   if (nw === null) {
-    nw = INITIAL_WORDS.map(w => ({...w}));
+    // 标准化 INITIAL_WORDS 从 {w,m} 到 {word,meanings} 格式
+    nw = INITIAL_WORDS.map(w => ({word: w.w, meanings: w.m}));
     saveBank(uid, 'new_words', nw);
     console.log('[词库] 初始化新词库', nw.length, '词');
   }
   S.newWords = nw;
   S.antiForgetting = loadBank(uid, 'anti_forgetting', []);
+  S.wrongWords = loadBank(uid, 'wrong_words', []);
   S.masteredCount = loadBank(uid, 'mastered_count', 0);
 }
 
@@ -231,13 +233,16 @@ function selectDictSource(src) {
   let pool;
   if (src === 'new') {
     pool = [...S.newWords];
+  } else if (src === 'wrong') {
+    pool = [...S.wrongWords];
   } else {
     const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
     const cutoff = yesterday.toISOString().slice(0,10);
     pool = S.antiForgetting.filter(w => w.added_date <= cutoff);
   }
   if (pool.length === 0) {
-    toast(src === 'new' ? '新词库为空，请先拍照添加单词' : '防遗忘词库中无符合条件的单词（需入库次日方可听写）');
+    const msgMap = { new: '新词库为空，请先拍照添加单词', wrong: '错词集为空，继续加油！', anti: '防遗忘词库中无符合条件的单词（需入库次日方可听写）' };
+    toast(msgMap[src] || '词库为空');
     S.page = 'home'; render(); return;
   }
   if (pool.length > 10) {
@@ -274,10 +279,14 @@ function renderDictation() {
         <h2 style="margin-bottom:12px">选择听写来源</h2>
         <p style="color:var(--text2);font-size:13px;margin-bottom:16px">
           新单词听写正确后自动转入「防遗忘」词库<br>
+          答错的单词进入「错词集」，答对后转入防遗忘<br>
           防遗忘词库中的单词需<strong>次日</strong>方可复习
         </p>
         <button class="btn btn-primary" onclick="selectDictSource('new')" style="width:100%;padding:16px;font-size:16px;margin-bottom:8px">
           📝 新单词 (${S.newWords.length}词)
+        </button>
+        <button class="btn btn-danger" onclick="selectDictSource('wrong')" style="width:100%;padding:16px;font-size:16px;margin-bottom:8px" ${S.wrongWords.length===0?'disabled':''}>
+          ❌ 错词集 (${S.wrongWords.length}词)
         </button>
         <button class="btn btn-success" onclick="selectDictSource('anti')" style="width:100%;padding:16px;font-size:16px" ${eligible===0?'disabled':''}>
           🔄 防遗忘复习 (${afCount}词 / 可听写${eligible}词)
@@ -310,7 +319,7 @@ function renderDictation() {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:12px;color:var(--text2)">${progress}/${total}</span>
         <span style="font-size:12px;color:var(--text2)">
-          ${S.dictSource==='new'?'📝 新单词':'🔄 防遗忘'}
+          ${S.dictSource==='new'?'📝 新单词':(S.dictSource==='wrong'?'❌ 错词集':'🔄 防遗忘')}
           &nbsp;${S.accent==='us'?'🇺🇸美式':'🇬🇧英式'}
         </span>
       </div>
@@ -327,6 +336,7 @@ function renderDictation() {
         <p style="font-size:14px;color:var(--text2);margin-bottom:4px">请输入单词拼写</p>
         <input class="input-field" id="spell-input" placeholder="输入英文拼写..." style="text-align:center;font-size:18px" autocomplete="off" autocapitalize="off">
         <button class="btn btn-primary" onclick="checkSpell()" style="width:100%;margin-top:8px">确认拼写</button>
+        <button class="btn" onclick="openHandwrite('spell')" style="width:100%;margin-top:4px;font-size:13px">✍️ 手写输入英文</button>
       </div>` : `
       <div style="color:var(--success);font-weight:600;margin-bottom:12px">✅ 拼写正确：${esc(w.word)}</div>
       `}
@@ -336,7 +346,7 @@ function renderDictation() {
         <p style="font-size:14px;color:var(--text2);margin-bottom:4px">请输入中文含义</p>
         <input class="input-field" id="meaning-input" placeholder="输入中文含义..." style="text-align:center;font-size:16px">
         <button class="btn btn-primary" onclick="checkMeaning()" style="width:100%;margin-top:8px">确认含义</button>
-        <button class="btn" onclick="openHandwrite()" style="width:100%;margin-top:4px;font-size:13px">✍️ 手写输入</button>
+        <button class="btn" onclick="openHandwrite('meaning')" style="width:100%;margin-top:4px;font-size:13px">✍️ 手写输入中文</button>
       </div>` : ''}
 
       ${S.correctSpell && S.correctMeaning ? `
@@ -348,7 +358,7 @@ function renderDictation() {
       </button>` : ''}
 
       <p style="font-size:12px;color:var(--text2);margin-top:8px">
-        ${S.dictSource==='new' ? '💡 新单词正确后转入防遗忘词库，不积分' : '💡 防遗忘词库正确后获得积分和等级'}
+        ${S.dictSource==='new' ? '💡 新单词正确后转入防遗忘词库，不积分' : (S.dictSource==='wrong' ? '💡 错词集正确后转入防遗忘词库，不积分' : '💡 防遗忘词库正确后获得积分和等级')}
       </p>
     </div>
   </div>`;
@@ -363,7 +373,9 @@ async function checkSpell() {
     render();
     setTimeout(() => document.getElementById('meaning-input')?.focus(), 100);
   } else {
-    toast('拼写错误，请再试一次');
+    moveToWrongWords();
+    toast('拼写错误，已加入错词集。正确答案：' + S.currentWord.word);
+    nextWord();
   }
 }
 
@@ -377,7 +389,33 @@ async function checkMeaning() {
     handleWordCorrect();
     render();
   } else {
-    toast(`不正确，正确答案：${(S.currentWord.meanings||[''])[0]}`);
+    moveToWrongWords();
+    toast(`不正确，正确答案：${(S.currentWord.meanings||[''])[0]}。已加入错词集`);
+    nextWord();
+  }
+}
+
+function moveToWrongWords() {
+  const w = S.currentWord;
+  const uid = S.currentUser.id;
+  // Remove from current bank
+  if (S.dictSource === 'new') {
+    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) S.newWords.splice(idx, 1);
+    saveBank(uid, 'new_words', S.newWords);
+  } else if (S.dictSource === 'anti') {
+    const idx = S.antiForgetting.findIndex(af => af.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) S.antiForgetting.splice(idx, 1);
+    saveBank(uid, 'anti_forgetting', S.antiForgetting);
+  } else if (S.dictSource === 'wrong') {
+    const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) S.wrongWords.splice(idx, 1);
+    saveBank(uid, 'wrong_words', S.wrongWords);
+  }
+  // Add to wrongWords (avoid duplicate)
+  if (!S.wrongWords.find(ww => ww.word.toLowerCase() === w.word.toLowerCase())) {
+    S.wrongWords.unshift({ word: w.word, meanings: w.meanings });
+    saveBank(uid, 'wrong_words', S.wrongWords);
   }
 }
 
@@ -386,29 +424,37 @@ async function handleWordCorrect() {
   const uid = S.currentUser.id;
 
   if (S.dictSource === 'new') {
-    // Move from newWords to antiForgetting
+    // New word correct → antiForgetting (次日可复习, 不积分)
     const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
     if (idx >= 0) S.newWords.splice(idx, 1);
     saveBank(uid, 'new_words', S.newWords);
-    // Add to antiForgetting with today's date
     if (!S.antiForgetting.find(af => af.word.toLowerCase() === w.word.toLowerCase())) {
       S.antiForgetting.push({ word: w.word, meanings: w.meanings, added_date: today() });
       saveBank(uid, 'anti_forgetting', S.antiForgetting);
     }
     toast('✅ 正确！已转入防遗忘词库（次日可复习）');
+  } else if (S.dictSource === 'wrong') {
+    // Wrong word correct → antiForgetting (次日可复习, 不积分)
+    const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) S.wrongWords.splice(idx, 1);
+    saveBank(uid, 'wrong_words', S.wrongWords);
+    if (!S.antiForgetting.find(af => af.word.toLowerCase() === w.word.toLowerCase())) {
+      S.antiForgetting.push({ word: w.word, meanings: w.meanings, added_date: today() });
+      saveBank(uid, 'anti_forgetting', S.antiForgetting);
+    }
+    toast('✅ 正确！已从错词集转入防遗忘词库（次日可复习）');
   } else {
-    // Anti-forgetting correct → earn points
+    // Anti-forgetting correct → mastered (积分+升级)
     const idx = S.antiForgetting.findIndex(af => af.word.toLowerCase() === w.word.toLowerCase());
     if (idx >= 0) S.antiForgetting.splice(idx, 1);
     saveBank(uid, 'anti_forgetting', S.antiForgetting);
     S.masteredCount++;
     saveBank(uid, 'mastered_count', S.masteredCount);
 
-    // Call backend for points
     const result = await earnPoints(w.word);
     if (result?.data) {
       const d = result.data;
-      S.currentUser = { ...S.currentUser, points: d.points, masteredWords: d.masteredWords };
+      S.currentUser = { ...S.currentUser, points: d.points, masteredWords: d.masteredWords, name: d.username || d.name || S.currentUser.name, username: d.username || d.name || S.currentUser.username };
       localStorage.setItem('current_user', JSON.stringify(S.currentUser));
       if (d.upgradeBonus) {
         setTimeout(() => alert(`🎉 升级奖励！获得 ${d.upgradeBonus} 积分！\n${d.upgradeReason||''}`), 300);
@@ -520,6 +566,10 @@ function renderWordBank() {
           <div style="font-size:12px;color:var(--text2)">📝 新单词</div>
         </div>
         <div style="background:var(--bg);padding:12px;border-radius:12px;text-align:center">
+          <div style="font-size:28px;font-weight:700;color:var(--danger)">${S.wrongWords.length}</div>
+          <div style="font-size:12px;color:var(--text2)">❌ 错词集</div>
+        </div>
+        <div style="background:var(--bg);padding:12px;border-radius:12px;text-align:center">
           <div style="font-size:28px;font-weight:700">${S.antiForgetting.length}</div>
           <div style="font-size:12px;color:var(--text2)">🔄 防遗忘 (${eligibleAF.length}可复习)</div>
         </div>
@@ -590,18 +640,20 @@ async function spendPoints() {
 }
 
 // ============ HANDWRITE ============
-function openHandwrite() {
+function openHandwrite(target) {
+  // target: 'spell' or 'meaning'
+  const inputId = target === 'spell' ? 'spell-input' : 'meaning-input';
   const canvas = document.createElement('canvas');
   canvas.width = 300; canvas.height = 200;
   canvas.style.cssText = 'border:2px solid var(--border);border-radius:12px;background:#fff;width:100%;touch-action:none';
   let drawing = false, ctx = canvas.getContext('2d');
   ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.strokeStyle = '#333';
 
-  const container = document.getElementById('meaning-input')?.parentElement;
-  if (!container) return;
+  const inputEl = document.getElementById(inputId);
+  if (!inputEl) return;
+  const container = inputEl.parentElement;
 
   // Replace input with canvas
-  const inputEl = document.getElementById('meaning-input');
   if (inputEl) inputEl.style.display = 'none';
 
   const btn = document.createElement('div');
@@ -618,7 +670,6 @@ function openHandwrite() {
 
   document.getElementById('hw-done').onclick = async () => {
     const dataUrl = canvas.toDataURL('image/png');
-    // Upload handwriting to backend for recognition
     try {
       const blob = await (await fetch(dataUrl)).blob();
       const fd = new FormData(); fd.append('file', blob, 'hw.png');
@@ -647,11 +698,11 @@ function openHandwrite() {
 async function registerUser() {
   const name = document.getElementById('new-user-name')?.value?.trim();
   if (!name) return toast('请输入用户名');
-  const res = await api('/api/growth/register', { method:'POST', body:JSON.stringify({name}) });
+  const res = await api('/api/growth/register', { method:'POST', body:JSON.stringify({username:name}) });
   if (res?.data) {
     const uid = res.data.id;
     initWordBanks(uid);
-    loginUser({ id: uid, name, points: 0, masteredWords: 0 });
+    loginUser({ id: uid, username: name, points: 0, masteredWords: 0 });
   }
 }
 
@@ -661,12 +712,31 @@ async function loginUser(u) {
   // Refresh from backend
   const res = await api(`/api/growth/user/${u.id}`);
   if (res?.data) {
-    S.currentUser = res.data;
-    localStorage.setItem('current_user', JSON.stringify(res.data));
+    // Backend returns {username, points, ...} — normalize to also have .name
+    const d = res.data;
+    S.currentUser = { ...d, name: d.username || d.name, username: d.username || d.name };
+    localStorage.setItem('current_user', JSON.stringify(S.currentUser));
   }
   initWordBanks(u.id);
   S.page = 'home';
   render();
+}
+
+async function deleteUser(uid) {
+  if (!confirm('确定删除该用户？所有词库数据将被清除。')) return;
+  const res = await api(`/api/growth/user/${uid}`, { method:'DELETE' });
+  if (res?.code === 200) {
+    // Clear localStorage data
+    ['new_words','anti_forgetting','wrong_words','mastered_count'].forEach(k => {
+      try { localStorage.removeItem(storageKey(uid, k)); } catch {}
+    });
+    try { localStorage.removeItem('current_user'); } catch {}
+    toast('用户已删除');
+    // Reload
+    S.currentUser = null; S.page = 'login'; init();
+  } else {
+    toast(res?.msg || '删除失败');
+  }
 }
 
 function switchUser() {
@@ -687,7 +757,8 @@ async function init() {
   if (cachedUser?.id) {
     const refresh = await api(`/api/growth/user/${cachedUser.id}`);
     if (refresh?.data) {
-      S.currentUser = refresh.data;
+      const d = refresh.data;
+      S.currentUser = { ...d, name: d.username || d.name, username: d.username || d.name };
       initWordBanks(cachedUser.id);
       S.page = 'home';
       render();
@@ -704,8 +775,9 @@ async function init() {
   if (listEl && users.length > 0) {
     listEl.innerHTML = users.map(u => `
       <button class="btn" onclick="loginUser(${JSON.stringify(u).replace(/"/g,'&quot;')})" style="width:100%;justify-content:flex-start;padding:12px;margin-bottom:4px">
-        <span>${esc(u.name)}</span>
+        <span>${esc(u.username || u.name || '?')}</span>
         <span style="margin-left:auto;font-size:12px;color:var(--text2)">⭐${u.points||0}</span>
+        <button class="btn btn-danger" onclick="event.stopPropagation();deleteUser(${u.id})" style="margin-left:8px;padding:4px 8px;font-size:11px">🗑</button>
       </button>`).join('');
   }
 }
@@ -720,6 +792,5 @@ function afterRender() {
 init();
 </script>
 
-</script>
 </body>
 </html>

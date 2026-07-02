@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, HttpCode } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Body, Param, HttpCode } from '@nestjs/common';
 import { GrowthService } from './growth.service';
 
 @Controller('growth')
@@ -8,12 +8,24 @@ export class GrowthController {
   /** 注册用户 */
   @Post('register')
   @HttpCode(200)
-  async register(@Body() body: { username: string }) {
+  async register(@Body() body: { name?: string; username?: string }) {
     try {
-      const user = await this.growthService.register(body.username);
+      const username = body.username || body.name || '';
+      const user = await this.growthService.register(username);
       return { code: 200, msg: '注册成功', data: user };
     } catch (error: any) {
       return { code: 400, msg: error?.message || '注册失败', data: null };
+    }
+  }
+
+  /** 删除用户 */
+  @Delete('user/:id')
+  async deleteUser(@Param('id') id: string) {
+    try {
+      await this.growthService.deleteUser(Number(id));
+      return { code: 200, msg: '删除成功', data: null };
+    } catch (error: any) {
+      return { code: 400, msg: error?.message || '删除失败', data: null };
     }
   }
 

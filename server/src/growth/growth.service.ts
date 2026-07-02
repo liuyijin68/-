@@ -271,6 +271,21 @@ export class GrowthService {
     return (data || []) as PointsRecord[];
   }
 
+  /** 删除用户 */
+  async deleteUser(userId: number): Promise<{ success: boolean }> {
+    const client = getSupabaseClient();
+
+    // 删除积分历史
+    await client.from('points_history').delete().eq('user_id', userId);
+    // 删除进度
+    await client.from('user_progress').delete().eq('user_id', userId);
+    // 删除用户
+    const { error } = await client.from('users').delete().eq('id', userId);
+    if (error) throw new Error(`删除用户失败: ${error.message}`);
+
+    return { success: true };
+  }
+
   /** 统计信息 */
   async getStats(userId: number): Promise<{ totalEarned: number; totalSpent: number; balance: number }> {
     const client = getSupabaseClient();
