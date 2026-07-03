@@ -91,6 +91,41 @@ function speakWord(word) {
   });
 }
 
+// ============ AUDIO REPLAY ============
+let audioTimeout = null;
+function replayAudio() {
+  if (!window.speechSynthesis) { toast('浏览器不支持语音合成'); return; }
+  window.speechSynthesis.cancel();
+  if (audioTimeout) clearTimeout(audioTimeout);
+  // Small delay to ensure cancel is processed
+  audioTimeout = setTimeout(() => {
+    const u = new SpeechSynthesisUtterance(S.currentWord?.word || '');
+    u.lang = S.accent === 'us' ? 'en-US' : 'en-GB';
+    u.rate = 0.85; u.pitch = 1;
+    u.onend = () => {};
+    u.onerror = () => {};
+    window.speechSynthesis.speak(u);
+  }, 150);
+}
+
+// ============ SKIP / EXIT ============
+function skipWord() {
+  const w = S.currentWord;
+  // Add to wrongWords if not already there
+  if (w && !S.wrongWords.find(ww => ww.word.toLowerCase() === w.word.toLowerCase())) {
+    S.wrongWords.unshift({ word: w.word, meanings: w.meanings });
+    saveBank(S.currentUser.id, 'wrong_words', S.wrongWords);
+  }
+  toast('已跳过：' + (w?.word || ''));
+  nextWord();
+}
+
+function exitDictation() {
+  if (!confirm('确定退出本轮听写？已完成的部分不受影响。')) return;
+  S.page = 'home';
+  render();
+}
+
 // ============ API ============
 async function api(url, opts={}) {
   try {
@@ -326,8 +361,8 @@ function renderDictation() {
       <div class="progress-bar" style="margin-bottom:16px">
         <div class="progress-fill" style="width:${progPct}%"></div>
       </div>
-      <button class="btn btn-primary" onclick="speakWord(w.word)" style="padding:12px 32px;font-size:20px;margin-bottom:12px">🔊 播放发音</button>
-      <button class="btn" onclick="S.accent=S.accent==='us'?'uk':'us';render();speakWord(w.word)" style="font-size:12px;padding:4px 12px;margin-bottom:12px">
+      <button class="btn btn-primary" onclick="replayAudio()" style="padding:12px 32px;font-size:20px;margin-bottom:12px">🔊 播放发音</button>
+      <button class="btn" onclick="S.accent=S.accent==='us'?'uk':'us';render();replayAudio()" style="font-size:12px;padding:4px 12px;margin-bottom:12px">
         切换 ${S.accent==='us'?'🇺🇸美式→🇬🇧英式':'🇬🇧英式→🇺🇸美式'}
       </button>
 
@@ -357,6 +392,10 @@ function renderDictation() {
         ${isLast ? '🎉 完成本轮' : '➡️ 下一个单词'}
       </button>` : ''}
 
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn" onclick="skipWord()" style="flex:1;font-size:13px;padding:8px">🤷 不会/跳过</button>
+        <button class="btn btn-danger" onclick="exitDictation()" style="flex:1;font-size:13px;padding:8px">🚪 退出听写</button>
+      </div>
       <p style="font-size:12px;color:var(--text2);margin-top:8px">
         ${S.dictSource==='new' ? '💡 新单词正确后转入防遗忘词库，不积分' : (S.dictSource==='wrong' ? '💡 错词集正确后转入防遗忘词库，不积分' : '💡 防遗忘词库正确后获得积分和等级')}
       </p>
@@ -491,11 +530,16 @@ function goUpload() { S.page = 'upload'; render(); }
 function renderUpload() {
   return `<div class="page active" id="page-upload">
     <div class="card" style="text-align:center">
-      <h2 style="margin-bottom:12px">📷 拍照添加单词</h2>
-      <p style="color:var(--text2);font-size:13px;margin-bottom:12px">拍摄英语单词表，AI自动识别并追加到新词库</p>
-      <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" onchange="handlePhoto(event)">
-      <button class="btn btn-primary" onclick="document.getElementById('photo-input').click()" style="width:100%;padding:14px;margin-bottom:8px">📸 拍照/选图片</button>
-      <div id="upload-status" style="margin-top:8px;font-size:13px"></div>
+      <h2 style="margin-bottom:12px">📷 添加单词</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:8px">拍照或从相册选择，AI自动识别</p>
+      <input type="file" id="photo-input" accept="image/*" style="display:none" onchange="handlePhoto(event)">
+      <button class="btn btn-primary" onclick="document.getElementById('photo-input').click()" style="width:100%;padding:14px;margin-bottom:12px">📸 拍照/选图片</button>
+      <div id="upload-status" style="margin-top:4px;font-size:13px"></div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+      <h3 style="margin-bottom:8px;font-size:15px">✏️ 手动输入单词</h3>
+      <input class="input-field" id="manual-word" placeholder="英文单词" style="margin-bottom:8px;text-align:center">
+      <input class="input-field" id="manual-meaning" placeholder="中文含义" style="margin-bottom:12px;text-align:center">
+      <button class="btn btn-success" onclick="addManualWord()" style="width:100%;padding:14px;margin-bottom:8px">➕ 添加到新词库</button>
       <button class="btn" onclick="S.page='home';render()" style="width:100%;margin-top:8px">返回</button>
     </div>
   </div>`;
@@ -545,6 +589,21 @@ async function handlePhoto(e) {
     st.innerHTML = `✅ 新增 ${added} 个单词，词库共 ${S.newWords.length} 词`;
     toast(`新增 ${added} 个单词`);
   } catch(e) { st.innerHTML = '❌ 识别失败'; }
+}
+
+function addManualWord() {
+  const word = document.getElementById('manual-word')?.value?.trim();
+  const meaning = document.getElementById('manual-meaning')?.value?.trim();
+  if (!word || !meaning) return toast('请填写英文单词和中文含义');
+  const uid = S.currentUser.id;
+  initWordBanks(uid);
+  const exists = S.newWords.find(nw => nw.word.toLowerCase() === word.toLowerCase());
+  if (exists) return toast('该单词已存在');
+  S.newWords.unshift({ word, meanings: [meaning] });
+  saveBank(uid, 'new_words', S.newWords);
+  document.getElementById('manual-word').value = '';
+  document.getElementById('manual-meaning').value = '';
+  toast(`✅ 已添加：${word} — ${meaning}（新词库共 ${S.newWords.length} 词）`);
 }
 
 // ============ WORD BANK OVERVIEW ============
@@ -774,11 +833,12 @@ async function init() {
   const listEl = document.getElementById('user-list');
   if (listEl && users.length > 0) {
     listEl.innerHTML = users.map(u => `
-      <button class="btn" onclick="loginUser(${JSON.stringify(u).replace(/"/g,'&quot;')})" style="width:100%;justify-content:flex-start;padding:12px;margin-bottom:4px">
-        <span>${esc(u.username || u.name || '?')}</span>
-        <span style="margin-left:auto;font-size:12px;color:var(--text2)">⭐${u.points||0}</span>
-        <button class="btn btn-danger" onclick="event.stopPropagation();deleteUser(${u.id})" style="margin-left:8px;padding:4px 8px;font-size:11px">🗑</button>
-      </button>`).join('');
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:12px;margin-bottom:6px;cursor:pointer" onclick="loginUser(${JSON.stringify(u).replace(/"/g,'&quot;')})">
+        <span style="flex:1;font-weight:600">${esc(u.username || u.name || '?')}</span>
+        <span style="font-size:12px;color:var(--text2)">⭐${u.points||0}</span>
+        <span style="font-size:12px;color:var(--text2)">✅${u.masteredWords||0}</span>
+        <span onclick="event.stopPropagation();deleteUser(${u.id})" style="cursor:pointer;padding:4px 8px;color:var(--danger);font-size:14px" title="删除用户">🗑</span>
+      </div>`).join('');
   }
 }
 
