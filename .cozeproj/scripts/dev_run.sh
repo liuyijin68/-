@@ -130,18 +130,22 @@ start_service() {
         echo "⚠️  警告: COZE_PROJECT_DOMAIN_DEFAULT 未设置，使用 .env.local 中的配置"
     fi
 
-    # 启动 Taro H5 和 NestJS Server
-    echo "Starting Taro H5 Dev Server and NestJS Server..."
+    # 直接启动 NestJS 在预览端口（5000），不启动 Taro
+    echo "Starting NestJS Server on port ${DEPLOY_RUN_PORT}..."
 
-    export PORT=${DEPLOY_RUN_PORT}
     rm -f /tmp/coze-logs/dev.log
     mkdir -p /tmp/coze-logs
 
-    # 后台启动并记录 PID
-    pnpm dev 2>&1 | tee /tmp/coze-logs/dev.log &
+    # 先编译
+    cd "${COZE_WORKSPACE_PATH}/server"
+    npx nest build > /dev/null 2>&1
+    cd "${COZE_WORKSPACE_PATH}"
+
+    # 后台启动 NestJS 并记录 PID（使用预览端口）
+    nohup node "${COZE_WORKSPACE_PATH}/server/dist/main.js" -p "${DEPLOY_RUN_PORT}" > /tmp/nestjs.log 2>&1 &
     local dev_pid=$!
     echo "${dev_pid}" > "${PID_FILE}"
-    echo "📝 Dev process started with PID: ${dev_pid} (saved to ${PID_FILE})"
+    echo "📝 NestJS started with PID: ${dev_pid} on port ${DEPLOY_RUN_PORT}"
 
     # 前台等待，保证 trap 能正常捕获信号
     wait "${dev_pid}" || true
