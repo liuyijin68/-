@@ -437,19 +437,11 @@ async function checkMeaning() {
 function moveToWrongWords() {
   const w = S.currentWord;
   const uid = S.currentUser.id;
-  // Remove from current bank
-  if (S.dictSource === 'new') {
-    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
-    if (idx >= 0) S.newWords.splice(idx, 1);
-    saveBank(uid, 'new_words', S.newWords);
-  } else if (S.dictSource === 'anti') {
+  // antiForgetting: remove from anti, it stays
+  if (S.dictSource === 'anti') {
     const idx = S.antiForgetting.findIndex(af => af.word.toLowerCase() === w.word.toLowerCase());
     if (idx >= 0) S.antiForgetting.splice(idx, 1);
     saveBank(uid, 'anti_forgetting', S.antiForgetting);
-  } else if (S.dictSource === 'wrong') {
-    const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
-    if (idx >= 0) S.wrongWords.splice(idx, 1);
-    saveBank(uid, 'wrong_words', S.wrongWords);
   }
   // Add to wrongWords (avoid duplicate)
   if (!S.wrongWords.find(ww => ww.word.toLowerCase() === w.word.toLowerCase())) {
@@ -463,15 +455,12 @@ async function handleWordCorrect() {
   const uid = S.currentUser.id;
 
   if (S.dictSource === 'new') {
-    // New word correct → antiForgetting (次日可复习, 不积分)
-    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
-    if (idx >= 0) S.newWords.splice(idx, 1);
-    saveBank(uid, 'new_words', S.newWords);
+    // New word correct → antiForgetting (次日可复习, 不积分), 保留在新词库
     if (!S.antiForgetting.find(af => af.word.toLowerCase() === w.word.toLowerCase())) {
       S.antiForgetting.push({ word: w.word, meanings: w.meanings, added_date: today() });
       saveBank(uid, 'anti_forgetting', S.antiForgetting);
     }
-    toast('✅ 正确！已转入防遗忘词库（次日可复习）');
+    toast('✅ 正确！已转入防遗忘词库（次日可复习），仍保留在新词库');
   } else if (S.dictSource === 'wrong') {
     // Wrong word correct → antiForgetting (次日可复习, 不积分)
     const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
@@ -642,15 +631,56 @@ function renderWordBank() {
         </div>
       </div>`;
 
+  // Clickable word bank sections
+  const bankSections = [
+    { title: '📝 新单词词库', key: 'new_words', data: S.newWords, color: 'var(--primary)' },
+    { title: '❌ 错词集', key: 'wrong_words', data: S.wrongWords, color: 'var(--danger)' },
+    { title: '🔄 防遗忘词库', key: 'anti_forgetting', data: S.antiForgetting, color: '#e65100' },
+  ];
+  for (const bs of bankSections) {
+    if (bs.data.length === 0) {
+      h += `<div style="margin-bottom:8px;padding:10px;background:var(--bg);border-radius:8px;text-align:center;font-size:13px;color:var(--text2)">
+        ${bs.title} — 暂无单词
+      </div>`;
+    } else {
+      h += `<details style="margin-bottom:8px;background:var(--bg);border-radius:8px;overflow:hidden">
+        <summary style="padding:10px 12px;cursor:pointer;font-weight:600;font-size:14px;list-style:none">
+          ${bs.title} <span style="color:${bs.color};float:right">${bs.data.length} 词 ▸</span>
+        </summary>
+        <div style="padding:0 12px 8px">`;
+      for (const w of bs.data.slice(0, 50)) {
+        h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span style="font-weight:600">${esc(w.word)}</span>
+          <span style="color:var(--text2);text-align:right;flex:1;margin-left:12px">${esc((w.meanings||[]).join('；'))}</span>
+          ${bs.key === 'new_words' ? `<span style="cursor:pointer;margin-left:8px;font-size:11px;color:var(--danger)" onclick="event.stopPropagation();deleteWord('new_words',${JSON.stringify(w.word).replace(/"/g,'&quot;')})">✕</span>` : ''}
+        </div>`;
+      }
+      if (bs.data.length > 50) {
+        h += `<div style="text-align:center;padding:4px;font-size:12px;color:var(--text2)">... 还有 ${bs.data.length - 50} 个单词</div>`;
+      }
+      h += `</div></details>`;
+    }
+  }
+
   if (todayAF.length > 0) {
     h += `<div style="margin-bottom:8px;padding:8px 12px;background:#fff3e0;border-radius:8px;font-size:13px;color:#e65100">
       🔒 ${todayAF.length} 个单词今日入库，明日方可复习
     </div>`;
   }
 
-  h += `<button class="btn" onclick="S.page='home';render()" style="width:100%">返回首页</button>
+  h += `<button class="btn" onclick="S.page='home';render()" style="width:100%;margin-top:8px">返回首页</button>
     </div></div>`;
   return h;
+}
+
+function deleteWord(bankKey, wordText) {
+  const uid = S.currentUser.id;
+  if (bankKey === 'new_words') {
+    S.newWords = S.newWords.filter(w => w.word !== wordText);
+    saveBank(uid, 'new_words', S.newWords);
+  }
+  toast('已删除：' + wordText);
+  render();
 }
 
 // ============ POINTS ============
