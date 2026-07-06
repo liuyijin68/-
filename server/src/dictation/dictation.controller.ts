@@ -42,7 +42,7 @@ export class DictationController {
   // ========== Image Upload (TOS) ==========
   @Post('upload-image')
   @HttpCode(200)
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(FileInterceptor('file'))
   async uploadImage(@UploadedFile() file: Express.Multer.File) {
     console.log('[upload-image] file received:', file?.originalname, 'size:', file?.buffer?.length);
 

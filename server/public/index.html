@@ -292,8 +292,8 @@ function selectDictSource(src) {
 }
 
 function beginDictationRound(pool) {
-  const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  S.dictQueue = shuffled.slice(0, S.dictCount);
+  // Sequential order — words are tested in array order
+  S.dictQueue = pool.slice(0, S.dictCount);
   S.dictIndex = 0;
   S.correctSpell = false;
   S.correctMeaning = false;
@@ -437,11 +437,16 @@ async function checkMeaning() {
 function moveToWrongWords() {
   const w = S.currentWord;
   const uid = S.currentUser.id;
-  // antiForgetting: remove from anti, it stays
-  if (S.dictSource === 'anti') {
+  // Remove from source bank
+  if (S.dictSource === 'new') {
+    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.newWords.splice(idx, 1); saveBank(uid, 'new_words', S.newWords); }
+  } else if (S.dictSource === 'anti') {
     const idx = S.antiForgetting.findIndex(af => af.word.toLowerCase() === w.word.toLowerCase());
-    if (idx >= 0) S.antiForgetting.splice(idx, 1);
-    saveBank(uid, 'anti_forgetting', S.antiForgetting);
+    if (idx >= 0) { S.antiForgetting.splice(idx, 1); saveBank(uid, 'anti_forgetting', S.antiForgetting); }
+  } else if (S.dictSource === 'wrong') {
+    const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.wrongWords.splice(idx, 1); saveBank(uid, 'wrong_words', S.wrongWords); }
   }
   // Add to wrongWords (avoid duplicate)
   if (!S.wrongWords.find(ww => ww.word.toLowerCase() === w.word.toLowerCase())) {
@@ -455,12 +460,14 @@ async function handleWordCorrect() {
   const uid = S.currentUser.id;
 
   if (S.dictSource === 'new') {
-    // New word correct → antiForgetting (次日可复习, 不积分), 保留在新词库
+    // New word correct → remove from newWords, add to antiForgetting
+    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.newWords.splice(idx, 1); saveBank(uid, 'new_words', S.newWords); }
     if (!S.antiForgetting.find(af => af.word.toLowerCase() === w.word.toLowerCase())) {
       S.antiForgetting.push({ word: w.word, meanings: w.meanings, added_date: today() });
       saveBank(uid, 'anti_forgetting', S.antiForgetting);
     }
-    toast('✅ 正确！已转入防遗忘词库（次日可复习），仍保留在新词库');
+    toast('✅ 正确！已转入防遗忘词库（次日可复习）');
   } else if (S.dictSource === 'wrong') {
     // Wrong word correct → antiForgetting (次日可复习, 不积分)
     const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
@@ -855,13 +862,17 @@ async function init() {
     }
   }
 
-  // Show login
+  // Show login — user list will be loaded by afterRender
   S.page = 'login';
   render();
+}
 
-  // Populate user list
+async function loadUserList() {
   const listEl = document.getElementById('user-list');
-  if (listEl && users.length > 0) {
+  if (!listEl) return;
+  const res = await api('/api/growth/users');
+  const users = res?.data || [];
+  if (users.length > 0) {
     listEl.innerHTML = users.map(u => `
       <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-radius:12px;margin-bottom:6px;cursor:pointer" onclick="loginUser(${JSON.stringify(u).replace(/"/g,'&quot;')})">
         <span style="flex:1;font-weight:600">${esc(u.username || u.name || '?')}</span>
@@ -869,10 +880,16 @@ async function init() {
         <span style="font-size:12px;color:var(--text2)">✅${u.masteredWords||0}</span>
         <span onclick="event.stopPropagation();deleteUser(${u.id})" style="cursor:pointer;padding:4px 8px;color:var(--danger);font-size:14px" title="删除用户">🗑</span>
       </div>`).join('');
+  } else {
+    listEl.innerHTML = '<div style="text-align:center;color:var(--text2);padding:12px;font-size:13px">暂无用户，请注册</div>';
   }
 }
 
 function afterRender() {
+  // Load user list on login page
+  if (S.page === 'login') {
+    loadUserList();
+  }
   // Focus spell input on dictation page
   if (S.page === 'dictation' && S.phase === 'playing' && !S.correctSpell) {
     setTimeout(() => document.getElementById('spell-input')?.focus(), 200);
