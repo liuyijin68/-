@@ -126,12 +126,22 @@ function exitDictation() {
   render();
 }
 
-// ============ API ============
-async function api(url, opts={}) {
-  try {
-    const res = await fetch(API_BASE + url, { headers:{'Content-Type':'application/json'}, ...opts });
-    return await res.json();
-  } catch(e) { console.error('API error:', e); return null; }
+// ============ API (with auto-retry) ============
+async function api(url, opts={}, retries=5) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(API_BASE + url, { headers:{'Content-Type':'application/json'}, ...opts });
+      if (!res.ok) { console.warn('API status', res.status); return null; }
+      return await res.json();
+    } catch(e) {
+      console.error('API error (attempt', i+1, '):', e);
+      if (i < retries - 1) {
+        const delay = Math.min(1000 * (i + 1), 3000); // 1s, 2s, 3s, 3s, 3s
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  return null;
 }
 
 async function earnPoints(word) {
@@ -844,13 +854,23 @@ function switchUser() {
 
 // ============ INIT ============
 async function init() {
-  // Load user list
+  // Show connecting status
+  const root = document.getElementById('app');
+  root.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px;gap:16px">
+      <div style="font-size:48px">🔄</div>
+      <div style="font-size:16px;color:var(--text1)">正在连接服务器...</div>
+      <div style="font-size:13px;color:var(--text2)" id="conn-msg">首次启动可能需要 5-10 秒，请耐心等待</div>
+    </div>`;
+
+  // Load user list (with retries)
   const res = await api('/api/growth/users');
   const users = res?.data || [];
   const cachedUser = (() => { try { return JSON.parse(localStorage.getItem('current_user')); } catch { return null; } })();
 
   // If cached user exists, refresh and go home
   if (cachedUser?.id) {
+    document.getElementById('conn-msg').textContent = '正在刷新用户信息...';
     const refresh = await api(`/api/growth/user/${cachedUser.id}`);
     if (refresh?.data) {
       const d = refresh.data;
