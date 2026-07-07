@@ -111,10 +111,22 @@ function replayAudio() {
 // ============ SKIP / EXIT ============
 function skipWord() {
   const w = S.currentWord;
+  const uid = S.currentUser.id;
+  // Remove from source bank
+  if (S.dictSource === 'new' && w) {
+    const idx = S.newWords.findIndex(nw => nw.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.newWords.splice(idx, 1); saveBank(uid, 'new_words', S.newWords); }
+  } else if (S.dictSource === 'wrong' && w) {
+    const idx = S.wrongWords.findIndex(ww => ww.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.wrongWords.splice(idx, 1); saveBank(uid, 'wrong_words', S.wrongWords); }
+  } else if (S.dictSource === 'anti' && w) {
+    const idx = S.antiForgetting.findIndex(af => af.word.toLowerCase() === w.word.toLowerCase());
+    if (idx >= 0) { S.antiForgetting.splice(idx, 1); saveBank(uid, 'anti_forgetting', S.antiForgetting); }
+  }
   // Add to wrongWords if not already there
   if (w && !S.wrongWords.find(ww => ww.word.toLowerCase() === w.word.toLowerCase())) {
     S.wrongWords.unshift({ word: w.word, meanings: w.meanings });
-    saveBank(S.currentUser.id, 'wrong_words', S.wrongWords);
+    saveBank(uid, 'wrong_words', S.wrongWords);
   }
   toast('已跳过：' + (w?.word || ''));
   nextWord();
@@ -775,13 +787,13 @@ function openHandwrite(target) {
   canvas.addEventListener('mouseup', () => { drawing=false; });
 
   document.getElementById('hw-done').onclick = async () => {
-    const dataUrl = canvas.toDataURL('image/png');
     try {
-      const blob = await (await fetch(dataUrl)).blob();
+      const blob = await new Promise<Blob>(resolve => canvas.toBlob(b => resolve(b), 'image/png'));
+      if (!blob) throw new Error('canvas toBlob failed');
       const fd = new FormData(); fd.append('file', blob, 'hw.png');
       const upRes = await fetch(API_BASE + '/api/dictation/upload-image', { method:'POST', body:fd });
       const upData = await upRes.json();
-      const imgUrl = upData.data?.url || upData.url;
+      const imgUrl = upData.data?.imageUrl || upData.data?.url || upData.url;
       if (!imgUrl) throw new Error('upload failed');
 
       const recRes = await fetch(API_BASE + '/api/dictation/recognize-handwriting', {
@@ -793,9 +805,10 @@ function openHandwrite(target) {
       canvas.remove(); btn.remove();
       toast(text ? '识别结果：' + text : '未识别到文字');
     } catch(e) {
+      console.error('Handwrite error:', e);
       if (inputEl) inputEl.style.display = '';
       canvas.remove(); btn.remove();
-      toast('手写识别失败');
+      toast('手写识别失败：' + (e.message || ''));
     }
   };
 }
