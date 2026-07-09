@@ -42,8 +42,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script>
 // ============ API_BASE ============
-// Auto-detect: Vercel uses Coze backend, local uses relative path
-const API_BASE = location.hostname.includes('vercel.app') 
+// Auto-detect: Vercel/GitHub Pages use Coze backend, local uses relative path
+const isRemote = location.hostname.includes('vercel.app') || location.hostname.includes('github.io');
+const API_BASE = isRemote
   ? 'https://e1c42d99-f5cc-4b80-994a-57d2dde29693.dev.coze.site'
   : '';
 
